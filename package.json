@@ -1,0 +1,23 @@
+{
+  "name": "multizen-4g-conveyor",
+  "version": "1.0.0",
+  "description": "4G USB ADB Rotator + Pure IPv4 Proxy Bridge (:8082 -> :8080) + MultiZen Dual-Browser Profile Manager & Account Warmup Conveyor",
+  "main": "multizen.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "infra:status": "node modules/infra_4g/runner.js",
+    "infra:rotate": "node modules/infra_4g/runner.js --rotate",
+    "infra:bridge": "node modules/infra_4g/zerum_adspower_4g_bridge.js",
+    "warmup:help": "node modules/account_warmup/runner.js --help",
+    "warmup:step1": "node modules/account_warmup/runner.js --create-step1",
+    "warmup:status": "node modules/account_warmup/runner.js --pipeline"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.14.0",
+    "rebrowser-puppeteer-core": "^25.14.101",
+    "ws": "^8.22.0"
+  }
+}
