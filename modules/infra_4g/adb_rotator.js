@@ -35,11 +35,17 @@ function resolveAdbBinary() {
 
 const ADB_BIN = resolveAdbBinary();
 const ADB_KEY_FILE = path.join(USER_HOME, '.android', 'adbkey');
+const HEX_RELAY_JAR_REMOTE = '/data/local/tmp/hex_relay.jar';
+
+process.env.ADB_LIBUSB = '0';
+process.env.ADB_USB_LEGACY = '1';
+process.env.ADB_BURST_MODE = '0';
 
 const ADB_EXEC_ENV = {
   ...process.env,
   ADB_USB_LEGACY: '1',
   ADB_LIBUSB: '0',
+  ADB_BURST_MODE: '0',
   ADB_TRACE: '',
   ...(fs.existsSync(ADB_KEY_FILE) ? { ADB_VENDOR_KEYS: ADB_KEY_FILE } : {})
 };
@@ -181,8 +187,16 @@ async function rotate4gIp(options = {}, onLog = console.log) {
         });
       } catch (_) {}
 
-      // 4. Garante port forward e aguarda estabilização do link rmnet4 LTE (3.5s)
-      ensurePortForward(8080, 8080, onLog);
+      // 4. Garante port forward HexRelay (18080 -> 8081) e aguarda estabilização do link rmnet4 LTE (3.5s)
+      ensurePortForward(18080, 8081, onLog);
+
+      // 4.1. Mantém a tela ligada no USB, desativa Doze Mode no Every Proxy, garante HexRelay vivo e foco do app
+      try {
+        execFileSync(ADB_BIN, ['shell', `settings put global stay_on_while_plugged_in 7; dumpsys deviceidle whitelist +com.gorillasoftware.everyproxy >/dev/null 2>&1; input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard; am start -n com.gorillasoftware.everyproxy/.MainActivity >/dev/null 2>&1; (ps -A | grep -q dalvikvm64) || (ANDROID_DATA=/data/local/tmp /apex/com.android.art/bin/dalvikvm64 -Xusejit:false -cp ${HEX_RELAY_JAR_REMOTE} HexRelay >/data/local/tmp/hex.log 2>&1 </dev/null &)`], {
+          timeout: 4500, env: ADB_EXEC_ENV, stdio: 'ignore', windowsHide: true
+        });
+      } catch (_) {}
+
       await new Promise(r => setTimeout(r, 3500));
 
       try {

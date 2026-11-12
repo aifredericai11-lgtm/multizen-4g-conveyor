@@ -15,7 +15,7 @@
  * - Escuta localmente em `127.0.0.1:8081`.
  * - Resolve o hostname de destino estritamente para IPv4 (`dns.lookup(..., { family: 4 })`).
  * - Envia `CONNECT <IPv4>:port` para `127.0.0.1:8080` (forçando o Android `rmnet4` a
- *   sair 100% pelo IPv4 CGNAT limpo e recém-rotacionado, ex: `100.64.12.34`,
+ *   sair 100% pelo IPv4 CGNAT limpo e recém-rotacionado, ex: `0.0.0.0`,
  *   eliminando 100% o vazamento do prefixo IPv6 `:18e6:`).
  * - Remove o header `Via: 1.1 localhost` do Every Proxy e preserva 100% o handshake
  *   TLS 1.3 (`X25519MLKEM768` / `h2` / `SNI`) nativo do Google Chrome 157 Oficial.
@@ -23,30 +23,208 @@
  */
 
 const net = require('net');
+const tls = require('tls');
+const https = require('https');
 const dns = require('dns').promises;
-const { execFile } = require('child_process');
+const { Resolver } = dns;
 
 const BRIDGE_HOST = '127.0.0.1';
 const BRIDGE_PORT = 8082;
 const UPSTREAM_HOST = '127.0.0.1';
 const UPSTREAM_PORT = 8080;
 
-const ipv4Cache = new Map();
-const CACHE_TTL_MS = 180 * 1000;
+const publicResolver = new Resolver();
+try {
+  publicResolver.setServers(['1.1.1.1', '8.8.8.8', '1.0.0.1', '8.8.4.4']);
+} catch (_) {}
 
-function resolveIpv4Via4gAdb(hostname) {
-  return new Promise((resolve) => {
-    const safeHost = String(hostname || '').replace(/[^a-zA-Z0-9.-]/g, '');
-    if (!safeHost) return resolve(null);
-    execFile('adb', ['shell', `ping -c 1 -W 1 ${safeHost}`], { timeout: 2200 }, (err, stdout) => {
-      const out = String(stdout || '');
-      const m = out.match(/\(([\d.]+)\)/);
-      if (m && m[1] && net.isIPv4(m[1])) {
-        return resolve(m[1]);
-      }
-      resolve(null);
-    });
+const ipv4Cache = new Map();
+const inFlightLookups = new Map();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos para IPs resolvidos via DoH 4G
+const FALLBACK_TTL_MS = 4000; // 4 segundos se vier de fallback
+
+function create4gDohAgent(dohIp, sniServername) {
+  return new https.Agent({
+    keepAlive: true,
+    maxSockets: 8,
+    maxFreeSockets: 4,
+    keepAliveMsecs: 25000,
+    timeout: 3500,
+    createConnection: (_opts, callback) => {
+      let settled = false;
+      const done = (err, sock) => {
+        if (settled) return;
+        settled = true;
+        callback(err, sock);
+      };
+
+      const rawSock = net.connect(UPSTREAM_PORT, UPSTREAM_HOST, () => {
+        rawSock.setNoDelay(true);
+        rawSock.write(`CONNECT ${dohIp}:443 HTTP/1.1\r\nHost: ${dohIp}:443\r\n\r\n`);
+      });
+      rawSock.setNoDelay(true);
+      rawSock.setTimeout(3200);
+
+      let buf = '';
+      const onProxyData = (chunk) => {
+        buf += chunk.toString('latin1');
+        const idx = buf.indexOf('\r\n\r\n');
+        if (idx === -1) {
+          if (buf.length > 8192) {
+            rawSock.destroy();
+            done(new Error('doh_proxy_header_overflow'));
+          }
+          return;
+        }
+        rawSock.removeListener('data', onProxyData);
+        const statusLine = buf.slice(0, idx).split('\r\n')[0] || '';
+        if (!/^HTTP\/1\.[01]\s+200\b/i.test(statusLine)) {
+          rawSock.destroy();
+          return done(new Error(`doh_proxy_status_${statusLine}`));
+        }
+        const tlsSock = tls.connect(
+          {
+            socket: rawSock,
+            servername: sniServername,
+            rejectUnauthorized: false
+          },
+          () => {
+            tlsSock.setNoDelay(true);
+            done(null, tlsSock);
+          }
+        );
+        tlsSock.once('error', (err) => {
+          try { tlsSock.destroy(); } catch (_) {}
+          done(err);
+        });
+      };
+
+      rawSock.on('data', onProxyData);
+      rawSock.once('error', (err) => {
+        try { rawSock.destroy(); } catch (_) {}
+        done(err);
+      });
+      rawSock.once('timeout', () => {
+        if (!settled) {
+          try { rawSock.destroy(); } catch (_) {}
+          done(new Error('doh_proxy_connect_timeout'));
+        }
+      });
+      return undefined;
+    }
   });
+}
+
+let googleDoh4gAgent = create4gDohAgent('8.8.8.8', 'dns.google');
+let cloudflareDoh4gAgent = create4gDohAgent('1.1.1.1', 'cloudflare-dns.com');
+
+function queryDoh4gJson(agent, hostHeader, reqPath, timeoutMs = 2400) {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = (err, ip) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve(ip);
+    };
+
+    const req = https.request(
+      {
+        hostname: hostHeader,
+        port: 443,
+        path: reqPath,
+        method: 'GET',
+        agent,
+        headers: {
+          Host: hostHeader,
+          Accept: 'application/dns-json'
+        }
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            const answers = Array.isArray(parsed && parsed.Answer) ? parsed.Answer : [];
+            const aRec = answers.find((a) => a && a.type === 1 && net.isIPv4(String(a.data || '').trim()));
+            if (aRec) {
+              return finish(null, String(aRec.data).trim());
+            }
+            finish(new Error('no_a_record'));
+          } catch (e) {
+            finish(e);
+          }
+        });
+      }
+    );
+
+    const timer = setTimeout(() => {
+      try { req.destroy(new Error('doh_req_timeout')); } catch (_) {}
+      finish(new Error('doh_req_timeout'));
+    }, timeoutMs);
+
+    req.once('error', (err) => finish(err));
+    req.end();
+  });
+}
+
+function isCritical4gDohOnlyDomain(host) {
+  return /(^|\.)(facebook\.com|fbcdn\.net|facebook\.net|fbsbx\.com|instagram\.com|google\.com|google\.com\.br|youtube\.com|googleapis\.com|gstatic\.com|ytimg\.com|ggpht\.com|googleusercontent\.com)$/i.test(host);
+}
+
+async function doLookupIpv4Fast(cleanHost) {
+  const enc = encodeURIComponent(cleanHost);
+
+  // 1) Tenta primeiro DoH 4G via Google DNS (8.8.8.8 sobre túnel 127.0.0.1:8080) -> devolve PoP da operadora 4G!
+  try {
+    const ip4g = await queryDoh4gJson(googleDoh4gAgent, 'dns.google', `/resolve?name=${enc}&type=A`, 2400);
+    if (ip4g && net.isIPv4(ip4g)) {
+      return { ip: ip4g, from4gDoh: true };
+    }
+  } catch (_) {}
+
+  // 2) Fallback DoH 4G via Cloudflare (1.1.1.1 sobre túnel 127.0.0.1:8080)
+  try {
+    const ip4gCf = await queryDoh4gJson(cloudflareDoh4gAgent, 'cloudflare-dns.com', `/dns-query?name=${enc}&type=A`, 2200);
+    if (ip4gCf && net.isIPv4(ip4gCf)) {
+      return { ip: ip4gCf, from4gDoh: true };
+    }
+  } catch (_) {}
+
+  // Para domínios Meta e Google/YouTube, NUNCA usar DNS da fibra residencial (evita mismatch ECS Fibra vs IP 4G no GFE/BotGuard e FNA Meta);
+  // faz retry rápido no DoH 4G caso o túnel estivesse estabilizando pós-Modo Avião
+  if (isCritical4gDohOnlyDomain(cleanHost)) {
+    await new Promise((r) => setTimeout(r, 450));
+    try {
+      const ipRetry = await queryDoh4gJson(googleDoh4gAgent, 'dns.google', `/resolve?name=${enc}&type=A`, 2800);
+      if (ipRetry && net.isIPv4(ipRetry)) {
+        return { ip: ipRetry, from4gDoh: true };
+      }
+    } catch (_) {}
+    try {
+      const ipRetryCf = await queryDoh4gJson(cloudflareDoh4gAgent, 'cloudflare-dns.com', `/dns-query?name=${enc}&type=A`, 2500);
+      if (ipRetryCf && net.isIPv4(ipRetryCf)) {
+        return { ip: ipRetryCf, from4gDoh: true };
+      }
+    } catch (_) {}
+    return { ip: cleanHost, from4gDoh: false };
+  }
+
+  // 3) Último fallback (domínios não-Meta) com TTL curto de 4s
+  try {
+    const list = await Promise.race([
+      publicResolver.resolve4(cleanHost),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('dns_timeout')), 1000))
+    ]);
+    if (Array.isArray(list) && list.length > 0 && net.isIPv4(list[0])) {
+      return { ip: list[0], from4gDoh: false };
+    }
+  } catch (_) {}
+
+  return { ip: cleanHost, from4gDoh: false };
 }
 
 async function resolveIpv4(hostname) {
@@ -57,45 +235,60 @@ async function resolveIpv4(hostname) {
   const cleanHost = String(hostname).trim().toLowerCase();
   const now = Date.now();
   const cached = ipv4Cache.get(cleanHost);
-  if (cached && (now - cached.ts) < CACHE_TTL_MS) {
+  if (cached && now < cached.expiresAt) {
     return cached.ip;
   }
 
-  // CRÍTICO: Para domínios Facebook/Meta, NUNCA usa o DNS da Fibra do PC (que retorna caches FNA locais 57.144.x.x da Fibra e gera erro no 4G).
-  // Resolve o IPv4 diretamente dentro do celular 4G via ADB (ou delega o hostname para o Every Proxy :8080 no 4G)!
-  const isMetaDomain = /(^|\.)(facebook\.com|fbcdn\.net|facebook\.net|fbsbx\.com|instagram\.com|whatsapp\.com|meta\.com)$/i.test(cleanHost);
-  if (isMetaDomain) {
-    const adbIp = await resolveIpv4Via4gAdb(cleanHost);
-    if (adbIp && net.isIPv4(adbIp)) {
-      ipv4Cache.set(cleanHost, { ip: adbIp, ts: now });
-      return adbIp;
-    }
-    return cleanHost;
+  if (inFlightLookups.has(cleanHost)) {
+    return inFlightLookups.get(cleanHost);
   }
 
-  try {
-    const res = await dns.lookup(cleanHost, { family: 4 });
-    if (res && res.address && net.isIPv4(res.address)) {
-      ipv4Cache.set(cleanHost, { ip: res.address, ts: now });
-      return res.address;
+  const lookupPromise = (async () => {
+    try {
+      const res = await doLookupIpv4Fast(cleanHost);
+      const resolved = res && res.ip ? res.ip : cleanHost;
+      if (resolved && net.isIPv4(resolved)) {
+        const ttl = res.from4gDoh ? CACHE_TTL_MS : FALLBACK_TTL_MS;
+        ipv4Cache.set(cleanHost, { ip: resolved, ts: Date.now(), expiresAt: Date.now() + ttl });
+        return resolved;
+      }
+      return cleanHost;
+    } finally {
+      inFlightLookups.delete(cleanHost);
     }
-  } catch (_) {}
+  })();
 
-  try {
-    const list = await dns.resolve4(cleanHost);
-    if (Array.isArray(list) && list.length > 0) {
-      ipv4Cache.set(cleanHost, { ip: list[0], ts: now });
-      return list[0];
-    }
-  } catch (_) {}
-
-  return cleanHost;
+  inFlightLookups.set(cleanHost, lookupPromise);
+  return lookupPromise;
 }
 
-let _bridgeServer = null;
+function prewarmMetaAndGoogleDns() {
+  const hosts = [
+    'www.facebook.com',
+    'web.facebook.com',
+    'business.facebook.com',
+    'static.xx.fbcdn.net',
+    'scontent.xx.fbcdn.net',
+    'edge-chat.facebook.com',
+    'gateway.facebook.com',
+    'www.youtube.com',
+    'www.google.com',
+    'accounts.google.com'
+  ];
+  for (const h of hosts) {
+    resolveIpv4(h).catch(() => {});
+  }
+}
+
+let _bridgeServer = global.__globalIpv4ProxyBridgeServer || null;
 
 function handleClientConnection(clientSocket) {
+  clientSocket.setNoDelay(true);
+  clientSocket.setTimeout(120000);
   clientSocket.once('error', () => {
+    try { clientSocket.destroy(); } catch (_) {}
+  });
+  clientSocket.once('timeout', () => {
     try { clientSocket.destroy(); } catch (_) {}
   });
 
@@ -125,11 +318,20 @@ function handleClientConnection(clientSocket) {
       const httpVer = matchConnect[3];
       const targetIpv4 = await resolveIpv4(targetHost);
 
+      if (clientSocket.destroyed) return;
+
       const upstream = net.connect(UPSTREAM_PORT, UPSTREAM_HOST, () => {
+        upstream.setNoDelay(true);
         upstream.write(`CONNECT ${targetIpv4}:${targetPort} ${httpVer}\r\nHost: ${targetIpv4}:${targetPort}\r\n\r\n`);
       });
+      upstream.setNoDelay(true);
+      upstream.setTimeout(120000);
 
       upstream.once('error', () => {
+        try { clientSocket.destroy(); } catch (_) {}
+      });
+      upstream.once('timeout', () => {
+        try { upstream.destroy(); } catch (_) {}
         try { clientSocket.destroy(); } catch (_) {}
       });
 
@@ -177,11 +379,18 @@ function handleClientConnection(clientSocket) {
 
     // Requisição HTTP comum (ex: http://ip-api.com/...) -> encaminha para o upstream 8080
     const upstream = net.connect(UPSTREAM_PORT, UPSTREAM_HOST, () => {
+      upstream.setNoDelay(true);
       upstream.write(headerBuf);
       clientSocket.pipe(upstream);
       upstream.pipe(clientSocket);
     });
+    upstream.setNoDelay(true);
+    upstream.setTimeout(120000);
     upstream.once('error', () => {
+      try { clientSocket.destroy(); } catch (_) {}
+    });
+    upstream.once('timeout', () => {
+      try { upstream.destroy(); } catch (_) {}
       try { clientSocket.destroy(); } catch (_) {}
     });
     clientSocket.once('close', () => {
@@ -195,14 +404,27 @@ function handleClientConnection(clientSocket) {
   clientSocket.once('data', onFirstData);
 }
 
+global.__globalIpv4ProxyHandler = handleClientConnection;
+
 function ensureIpv4ProxyBridgeRunning(onLog = () => {}) {
   if (_bridgeServer && _bridgeServer.listening) {
     return Promise.resolve({ running: true, host: BRIDGE_HOST, port: BRIDGE_PORT });
   }
   return new Promise((resolve) => {
-    const srv = net.createServer(handleClientConnection);
+    let inUseRetries = 0;
+    const srv = net.createServer((clientSock) => {
+      const fn = global.__globalIpv4ProxyHandler || handleClientConnection;
+      fn(clientSock);
+    });
     srv.on('error', (err) => {
       if (err && err.code === 'EADDRINUSE') {
+        if (inUseRetries < 6) {
+          inUseRetries++;
+          setTimeout(() => {
+            try { srv.listen(BRIDGE_PORT, BRIDGE_HOST); } catch (_) {}
+          }, 350);
+          return;
+        }
         resolve({ running: true, host: BRIDGE_HOST, port: BRIDGE_PORT, external: true });
       } else {
         resolve({ running: false, host: BRIDGE_HOST, port: BRIDGE_PORT, error: err.message });
@@ -210,7 +432,9 @@ function ensureIpv4ProxyBridgeRunning(onLog = () => {}) {
     });
     srv.listen(BRIDGE_PORT, BRIDGE_HOST, () => {
       _bridgeServer = srv;
-      onLog(`🛡️ [Ponte 4G IPv4-Only] Ativa em ${BRIDGE_HOST}:${BRIDGE_PORT} -> ${UPSTREAM_HOST}:${UPSTREAM_PORT} (Zero IPv6 :18e6: + Zero Header Via)`);
+      global.__globalIpv4ProxyBridgeServer = srv;
+      setTimeout(() => prewarmMetaAndGoogleDns(), 650);
+      onLog(`🛡️ [Ponte 4G IPv4-Only + DoH 4G] Ativa em ${BRIDGE_HOST}:${BRIDGE_PORT} -> ${UPSTREAM_HOST}:${UPSTREAM_PORT} (ECS 4G + Zero IPv6 + Zero Via)`);
       resolve({ running: true, host: BRIDGE_HOST, port: BRIDGE_PORT });
     });
   });
@@ -218,7 +442,15 @@ function ensureIpv4ProxyBridgeRunning(onLog = () => {}) {
 
 function clearIpv4DnsCache() {
   ipv4Cache.clear();
+  try { googleDoh4gAgent.destroy(); } catch (_) {}
+  try { cloudflareDoh4gAgent.destroy(); } catch (_) {}
+  googleDoh4gAgent = create4gDohAgent('8.8.8.8', 'dns.google');
+  cloudflareDoh4gAgent = create4gDohAgent('1.1.1.1', 'cloudflare-dns.com');
+  setTimeout(() => prewarmMetaAndGoogleDns(), 400);
 }
+
+// Inicia automaticamente a ponte 127.0.0.1:8082 assim que o módulo é carregado
+ensureIpv4ProxyBridgeRunning().catch(() => {});
 
 module.exports = {
   BRIDGE_HOST,
@@ -227,6 +459,7 @@ module.exports = {
   UPSTREAM_PORT,
   ensureIpv4ProxyBridgeRunning,
   clearIpv4DnsCache,
+  prewarmMetaAndGoogleDns,
   resolveIpv4
 };
 

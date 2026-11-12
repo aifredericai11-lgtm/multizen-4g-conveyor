@@ -36,7 +36,7 @@ function isStandingFacebookProfileId(profileId) {
  * Trust Tokens, MediaDeviceSalts e Local State (client_id) mudarem de placa de vídeo (GPU),
  * resolução de tela e Seed C++ entre tentativas!
  */
-function wipeVirginProfileDiskDirectory(profileDataDir, profileId) {
+function wipeVirginProfileDiskDirectory(profileDataDir, profileId, seedHint = null, fpHint = null) {
   if (!profileDataDir || !fs.existsSync(profileDataDir)) return false;
   if (isStandingFacebookProfileId(profileId)) {
     return false; // Trava absoluta: NUNCA limpa disco de conta com Facebook de pé!
@@ -56,10 +56,10 @@ function wipeVirginProfileDiskDirectory(profileDataDir, profileId) {
       : path.join(profileDataDir, 'engines', 'cloakbrowser');
     fs.mkdirSync(targetEngineDir, { recursive: true });
     if (hasOfficialChrome && typeof MultiZenService.seedOfficialChromeVariationsAndTrustTokens === 'function') {
-      MultiZenService.seedOfficialChromeVariationsAndTrustTokens(targetEngineDir);
+      MultiZenService.seedOfficialChromeVariationsAndTrustTokens(targetEngineDir, seedHint);
     }
     if (typeof MultiZenService.sanitizeMultiZenDiskBeforeLaunch === 'function') {
-      MultiZenService.sanitizeMultiZenDiskBeforeLaunch(targetEngineDir);
+      MultiZenService.sanitizeMultiZenDiskBeforeLaunch(targetEngineDir, seedHint, fpHint);
     }
     return true;
   } catch (_) {
@@ -155,7 +155,7 @@ function refreshVirginSlotFingerprint(profileId, options = {}) {
     );
 
     const diskWiped = options.wipeDisk !== false
-      ? wipeVirginProfileDiskDirectory(row.data_dir, profileId)
+      ? wipeVirginProfileDiskDirectory(row.data_dir, profileId, newSeed, fp)
       : false;
 
     return {

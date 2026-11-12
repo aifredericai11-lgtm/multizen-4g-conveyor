@@ -34,22 +34,33 @@ function encryptVaultSecret(plainText) {
   }
 }
 
+function getFallbackVaultCipherKeys() {
+  const seeds = [
+    `LOCAL_001_VAULT::${os.hostname()}::${process.env.USERNAME || 'operator'}::${PROJECT_ROOT}`,
+    'LOCAL_001_VAULT::DESKTOP-HDSI78P::operator::~\\Downloads\\JailBreaking Game',
+    `LOCAL_001_VAULT::${os.hostname()}::operator::C:\\Hub001`
+  ];
+  return seeds.map(s => crypto.createHash('sha256').update(s).digest());
+}
+
 function decryptVaultSecret(cipherText) {
   const raw = String(cipherText || '').trim();
   if (!raw) return '';
   if (!raw.startsWith('v1:')) return raw;
-  try {
-    const parts = raw.split(':');
-    if (parts.length !== 4) return '';
-    const iv = Buffer.from(parts[1], 'hex');
-    const tag = Buffer.from(parts[2], 'hex');
-    const enc = Buffer.from(parts[3], 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', getLocalVaultCipherKey(), iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
-  } catch (_) {
-    return '';
+  const parts = raw.split(':');
+  if (parts.length !== 4) return '';
+  const iv = Buffer.from(parts[1], 'hex');
+  const tag = Buffer.from(parts[2], 'hex');
+  const enc = Buffer.from(parts[3], 'hex');
+  for (const key of getFallbackVaultCipherKeys()) {
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(tag);
+      const out = Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
+      if (out) return out;
+    } catch (_) {}
   }
+  return '';
 }
 
 let _localEnvVaultCache = null;

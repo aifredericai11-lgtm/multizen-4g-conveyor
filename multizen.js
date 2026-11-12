@@ -32,34 +32,104 @@ const GPU_PROFILES_WIN = [
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 SUPER (0x00002783) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
     vendor: 'Google Inc. (NVIDIA)',
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 6600 (0x000073FF) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
     vendor: 'Google Inc. (NVIDIA)',
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Ti (0x00002803) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 6650 XT (0x000073EF) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
     vendor: 'Google Inc. (NVIDIA)',
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 (0x00002882) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 6700 XT (0x000073DF) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
     vendor: 'Google Inc. (NVIDIA)',
-    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4050 Laptop GPU (0x000028E1) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4050 Laptop GPU (0x000028A1) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 7600 (0x00007480) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
     vendor: 'Google Inc. (NVIDIA)',
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002504) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
-    vendor: 'Google Inc. (NVIDIA)',
-    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 (0x00002484) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   },
   {
     vendor: 'Google Inc. (NVIDIA)',
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 (0x00002507) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 580 2048SP (0x00006FDF) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 SUPER (0x000021C4) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+  },
+  {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics (0x000015D8) Direct3D11 vs_5_0 ps_5_0, D3D11)'
   }
 ];
+
+function selectOfficialChromeHardwareProfile(seed = 54321, fp = null) {
+  const numSeed = Number(seed) || 54321;
+  const vendorStr = String((fp && fp.webgl && fp.webgl.vendor) || '').toUpperCase();
+  const useAmdLowPower = vendorStr.includes('AMD')
+    ? true
+    : (vendorStr.includes('NVIDIA') ? false : (numSeed % 2 === 1));
+  const useD3d11On12 = ((Math.floor(numSeed / 3)) % 2) === 1;
+  const winWidths = [1280, 1344, 1366, 1408, 1440, 1480, 1512, 1536];
+  const winHeights = [768, 792, 810, 824, 840, 864, 880, 900];
+  const winW = winWidths[numSeed % winWidths.length];
+  const winH = winHeights[Math.floor(numSeed / 11) % winHeights.length];
+  const posX = 16 + (numSeed % 84);
+  const posY = 14 + (Math.floor(numSeed / 17) % 52);
+
+  const gpuFlags = [
+    useAmdLowPower ? '--force_low_power_gpu' : '--force_high_performance_gpu'
+  ];
+  if (useD3d11On12) {
+    gpuFlags.push('--use-angle=d3d11on12');
+  } else {
+    gpuFlags.push('--use-angle=d3d11');
+  }
+
+  return {
+    silicon_family: useAmdLowPower ? 'AMD_RADEON_LOW_POWER' : 'NVIDIA_RTX_HIGH_PERF',
+    angle_backend: useD3d11On12 ? 'd3d11on12' : 'd3d11',
+    window_width: winW,
+    window_height: winH,
+    window_x: posX,
+    window_y: posY,
+    cli_flags: [
+      ...gpuFlags,
+      `--window-position=${posX},${posY}`,
+      `--window-size=${winW},${winH}`
+    ]
+  };
+}
 
 const SCREEN_PROFILES = [
   { width: 1920, height: 1080 },
@@ -79,7 +149,7 @@ function deviceMemoryApiValue(physicalGb) {
   return Math.min(8, Math.max(2, 2 ** Math.round(Math.log2(n))));
 }
 
-function migrateNativeChromeToCloakBrowser(profileDataDir, onLog = () => {}) {
+function migrateNativeChromeToCloakBrowser(profileDataDir, onLog = () => { }) {
   if (!profileDataDir) return false;
   try {
     const nativeChromeDir = path.join(profileDataDir, 'chrome_native');
@@ -87,10 +157,14 @@ function migrateNativeChromeToCloakBrowser(profileDataDir, onLog = () => {}) {
     if (!fs.existsSync(nativeCookies)) return false;
 
     const officialDir = path.join(profileDataDir, 'engines', 'cloakbrowser');
-    const officialNetDir = path.join(officialDir, 'Default', 'Network');
+    const officialDefDir = path.join(officialDir, 'Default');
+    const officialNetDir = path.join(officialDefDir, 'Network');
     fs.mkdirSync(officialNetDir, { recursive: true });
 
-    // 1. Copia Local State preservando os_crypt.encrypted_key (DPAPI v10) para que o CloakBrowser 146 decripte 100% dos cookies do Gmail!
+    // Semeia VariationsSeedV2 + TrustTokenKeyCommitments no destino antes de mesclar Local State
+    seedOfficialChromeVariationsAndTrustTokens(officialDir);
+
+    // 1. Copia Local State preservando os_crypt.encrypted_key (DPAPI v10) + client_id2 + installation_date2 do Passo 1 (continuidade total!)
     const srcLs = path.join(nativeChromeDir, 'Local State');
     const dstLs = path.join(officialDir, 'Local State');
     if (fs.existsSync(srcLs)) {
@@ -100,34 +174,52 @@ function migrateNativeChromeToCloakBrowser(profileDataDir, onLog = () => {}) {
         if (fs.existsSync(dstLs)) {
           try { dstLsObj = JSON.parse(fs.readFileSync(dstLs, 'utf8')) || {}; } catch (_) { dstLsObj = {}; }
         }
-        if (srcLsObj.os_crypt) {
-          dstLsObj.os_crypt = srcLsObj.os_crypt;
+        for (const keepKey of ['os_crypt', 'uninstall_metrics', 'user_experience_metrics']) {
+          if (srcLsObj[keepKey]) {
+            dstLsObj[keepKey] = srcLsObj[keepKey];
+          }
         }
         fs.writeFileSync(dstLs, JSON.stringify(dstLsObj), 'utf8');
       } catch (_) {
-        try { fs.copyFileSync(srcLs, dstLs); } catch (_) {}
+        try { fs.copyFileSync(srcLs, dstLs); } catch (_) { }
       }
     }
 
-    // 2. Copia o banco SQLite de Cookies (SID, HSID, SSID, APISID, SAPISID, OSID, __Secure-1PSID) recém-criados no Passo 1
-    for (const f of ['Cookies', 'Cookies-journal']) {
+    // 2. Copia Cookies + Trust Tokens + TransportSecurity da rede (SID, HSID, SSID, APISID, SAPISID, OSID, __Secure-1PSID, TrustTokens)
+    for (const f of ['Cookies', 'Cookies-journal', 'Trust Tokens', 'Trust Tokens-journal', 'TransportSecurity']) {
       const s = path.join(nativeChromeDir, 'Default', 'Network', f);
       const d = path.join(officialNetDir, f);
       if (fs.existsSync(s)) {
-        try { fs.copyFileSync(s, d); } catch (_) {}
+        try { fs.copyFileSync(s, d); } catch (_) { }
       }
     }
 
-    // 3. Arquiva chrome_native -> chrome_native_gmail_seed para que o perfil passe a rodar 100% no MultiZen CloakBrowser 146 C++ (com Fingerprint C++ única no Facebook!)
+    // 2.1. Copia Web Data + Local Storage + Session Storage + IndexedDB (evita perda de tokens OAuth/AccountChooser do Gmail no Passo 2!)
+    for (const f of ['Web Data', 'Web Data-journal']) {
+      const s = path.join(nativeChromeDir, 'Default', f);
+      const d = path.join(officialDefDir, f);
+      if (fs.existsSync(s)) {
+        try { fs.copyFileSync(s, d); } catch (_) { }
+      }
+    }
+    for (const dirName of ['Local Storage', 'Session Storage', 'IndexedDB']) {
+      const sDir = path.join(nativeChromeDir, 'Default', dirName);
+      const dDir = path.join(officialDefDir, dirName);
+      if (fs.existsSync(sDir)) {
+        try { fs.cpSync(sDir, dDir, { recursive: true, force: true }); } catch (_) { }
+      }
+    }
+
+    // 3. Arquiva chrome_native -> chrome_native_gmail_seed para que o perfil passe a rodar no MultiZen CloakBrowser C++ mantendo backup nativo!
     const seedArchiveDir = path.join(profileDataDir, 'chrome_native_gmail_seed');
     try {
       if (fs.existsSync(seedArchiveDir)) {
         fs.rmSync(seedArchiveDir, { recursive: true, force: true });
       }
       fs.renameSync(nativeChromeDir, seedArchiveDir);
-    } catch (_) {}
+    } catch (_) { }
 
-    onLog(`🔄 [Ponte Chrome 157 ➔ CloakBrowser 146 C++] Cookies do Gmail (SID/OSID/os_crypt) migrados para o motor Anti-Detect C++ do perfil!`);
+    onLog(`🔄 [Ponte Contínua Passo 1 ➔ Passo 2] Cookies + TrustTokens + Storage + os_crypt migrados sem perda para o motor Anti-Detect C++!`);
     return true;
   } catch (_) {
     return false;
@@ -246,7 +338,7 @@ function computeNumericFingerprintSeed(profileId, fp) {
  * 3. Trava `webrtc.ip_handling_policy = 'disable_non_proxied_udp'`, `dns_over_https.mode = 'off'`, `network_prediction_options = 2`,
  *    `dns_prefetching.enabled = false`, `intl.accept_languages = 'pt-BR,pt,en-US,en'` e remove `per_host_zoom_levels` do Facebook (DPR = 1.0).
  */
-function sanitizeMultiZenDiskBeforeLaunch(browserDataDir) {
+function sanitizeMultiZenDiskBeforeLaunch(browserDataDir, seedHint = null, fpHint = null) {
   if (!browserDataDir) return;
   try {
     const profDir = path.join(browserDataDir, 'Default');
@@ -258,7 +350,7 @@ function sanitizeMultiZenDiskBeforeLaunch(browserDataDir) {
       for (const fName of ['Reporting and NEL', 'Reporting and NEL-journal']) {
         const p = path.join(netDir, fName);
         if (fs.existsSync(p)) {
-          try { fs.unlinkSync(p); } catch (_) {}
+          try { fs.unlinkSync(p); } catch (_) { }
         }
       }
 
@@ -275,11 +367,11 @@ function sanitizeMultiZenDiskBeforeLaunch(browserDataDir) {
             }
             fs.writeFileSync(npsPath, JSON.stringify(nps), 'utf8');
           }
-        } catch (_) {}
+        } catch (_) { }
       }
     }
 
-    // 3. Blinda Preferences (WebRTC, DoH, Preconnect, Accept-Language, Exit Normal e Zoom/DPR 1.0 no Facebook)
+    // 3. Blinda Preferences (WebRTC, DoH, Preconnect, Accept-Language, Exit Normal, Geometria Única por Seed e DPR 1.0)
     const prefPath = path.join(profDir, 'Preferences');
     let prefs = {};
     if (fs.existsSync(prefPath)) {
@@ -293,15 +385,20 @@ function sanitizeMultiZenDiskBeforeLaunch(browserDataDir) {
       exit_type: 'Normal',
       exited_cleanly: true
     });
+    const hwGeom = selectOfficialChromeHardwareProfile(seedHint || 54321, fpHint);
     const curPlacement = (prefs.browser && prefs.browser.window_placement) || {};
+    const defLeft = hwGeom.window_x;
+    const defTop = hwGeom.window_y;
+    const defRight = defLeft + hwGeom.window_width;
+    const defBottom = defTop + hwGeom.window_height;
     prefs.browser = Object.assign({}, prefs.browser || {}, {
       window_placement: {
-        bottom: Math.max(820, Number(curPlacement.bottom) || 920),
-        left: (typeof curPlacement.left === 'number' && curPlacement.left >= 0 && curPlacement.left <= 1600) ? curPlacement.left : 20,
+        bottom: Number(curPlacement.bottom) > 650 ? Number(curPlacement.bottom) : defBottom,
+        left: (typeof curPlacement.left === 'number' && curPlacement.left > 0 && curPlacement.left <= 1600) ? curPlacement.left : defLeft,
         maximized: curPlacement.maximized !== undefined ? Boolean(curPlacement.maximized) : false,
         minimized: false,
-        right: Math.max(1280, Number(curPlacement.right) || 1420),
-        top: (typeof curPlacement.top === 'number' && curPlacement.top >= 0 && curPlacement.top <= 900) ? curPlacement.top : 20,
+        right: Number(curPlacement.right) > 1100 ? Number(curPlacement.right) : defRight,
+        top: (typeof curPlacement.top === 'number' && curPlacement.top > 0 && curPlacement.top <= 900) ? curPlacement.top : defTop,
         work_area_bottom: Number(curPlacement.work_area_bottom) || 1040,
         work_area_left: 0,
         work_area_right: Number(curPlacement.work_area_right) || 1920,
@@ -336,20 +433,18 @@ function sanitizeMultiZenDiskBeforeLaunch(browserDataDir) {
       }
     }
     fs.writeFileSync(prefPath, JSON.stringify(prefs), 'utf8');
-  } catch (_) {}
+  } catch (_) { }
 }
 
 /**
- * Pré-semeia um diretório isolado do Google Chrome Oficial (157+) com os componentes
+ * Pré-semeia um diretório isolado do Google Chrome Oficial (157+) / CloakBrowser com os componentes
  * criptográficos reais da instalação oficial do Windows (%LOCALAPPDATA%\Google\Chrome\User Data):
  * - `VariationsSeedV2`, `VariationsSafeSeedV2`, `Variations`, `First Run`
  * - `TrustTokenKeyCommitments`, `CaptchaProviders`, `PrivacySandboxAttestationsPreloaded`, `FirstPartySetsPreloaded`, `PKIMetadata`, `MEIPreload`, `OriginTrials`
- * - Chaves `variations_*` no `Local State`
- * Resultado comprovado: já no 1º boot do perfil isolado, o renderer sobe com
- * `--variations-seed-version=20261108-030038.655000-production` e envia o header
- * `X-Client-Data` oficial da Google LLC (zero aviso "Baixe o Chrome" e zero ruído sintético Bromite).
+ * - Chaves `variations_*` limpas no `Local State` (EXCLUINDO `variations_sticky_studies` e `variations_google_groups` do host pessoal,
+ *   para que `low_entropy_source3` gere um header `X-Client-Data` criptograficamente válido e 100% ÚNICO para cada Gmail criado no PC!).
  */
-function seedOfficialChromeVariationsAndTrustTokens(browserDataDir) {
+function seedOfficialChromeVariationsAndTrustTokens(browserDataDir, seedHint = null) {
   if (!browserDataDir) return false;
   try {
     fs.mkdirSync(path.join(browserDataDir, 'Default'), { recursive: true });
@@ -365,7 +460,7 @@ function seedOfficialChromeVariationsAndTrustTokens(browserDataDir) {
       const src = path.join(hostUserData, fileName);
       const dst = path.join(browserDataDir, fileName);
       if (fs.existsSync(src) && !fs.existsSync(dst)) {
-        try { fs.copyFileSync(src, dst); } catch (_) {}
+        try { fs.copyFileSync(src, dst); } catch (_) { }
       }
     }
 
@@ -381,7 +476,7 @@ function seedOfficialChromeVariationsAndTrustTokens(browserDataDir) {
       const srcDir = path.join(hostUserData, dirName);
       const dstDir = path.join(browserDataDir, dirName);
       if (fs.existsSync(srcDir) && !fs.existsSync(dstDir)) {
-        try { fs.cpSync(srcDir, dstDir, { recursive: true }); } catch (_) {}
+        try { fs.cpSync(srcDir, dstDir, { recursive: true }); } catch (_) { }
       }
     }
 
@@ -393,23 +488,37 @@ function seedOfficialChromeVariationsAndTrustTokens(browserDataDir) {
       if (fs.existsSync(dstLsPath)) {
         try { dstLs = JSON.parse(fs.readFileSync(dstLsPath, 'utf8')) || {}; } catch (_) { dstLs = {}; }
       }
+      const blockedHostVariationKeys = new Set([
+        'variations_sticky_studies',
+        'variations_google_groups'
+      ]);
       for (const k of Object.keys(hostLs)) {
-        if (k.startsWith('variations') && dstLs[k] === undefined) {
+        if (k.startsWith('variations') && !blockedHostVariationKeys.has(k) && dstLs[k] === undefined) {
           dstLs[k] = hostLs[k];
         }
       }
-      // Gera entropia única por perfil (nunca clona installation_date2 nem client_id2 do Chrome principal do host!)
-      const dirHash = crypto.createHash('sha256').update(String(browserDataDir)).digest('hex');
-      const daysAgoSec = (18 + (parseInt(dirHash.slice(0, 4), 16) % 42)) * 86400 + (parseInt(dirHash.slice(4, 8), 16) % 86400);
+      // Remove caso tenha sobrado de versão antiga
+      delete dstLs.variations_sticky_studies;
+      dstLs.variations_google_groups = { Default: [] };
+
+      // Gera entropia única por perfil + seed (cada Gmail emite um X-Client-Data Google válido e diferente!)
+      const entropyInput = `${browserDataDir}|${seedHint !== null && seedHint !== undefined ? seedHint : ''}`;
+      const dirHash = crypto.createHash('sha256').update(entropyInput).digest('hex');
+      const daysAgoSec = (18 + (parseInt(dirHash.slice(0, 4), 16) % 55)) * 86400 + (parseInt(dirHash.slice(4, 8), 16) % 86400);
       const fakeInstallEpoch = String(Math.floor(Date.now() / 1000) - daysAgoSec);
-      if (!dstLs.uninstall_metrics) {
-        dstLs.uninstall_metrics = { installation_date2: fakeInstallEpoch };
+      if (!dstLs.uninstall_metrics || seedHint !== null) {
+        if (!dstLs.uninstall_metrics) {
+          dstLs.uninstall_metrics = { installation_date2: fakeInstallEpoch };
+        }
       }
       if (!dstLs.user_experience_metrics) {
+        const lowEntropy = seedHint !== null && Number.isFinite(Number(seedHint))
+          ? ((Number(seedHint) * 131 + parseInt(dirHash.slice(8, 12), 16)) % 8000)
+          : (parseInt(dirHash.slice(8, 12), 16) % 8000);
         dstLs.user_experience_metrics = {
           client_id2: crypto.randomUUID(),
           client_id_timestamp: fakeInstallEpoch,
-          low_entropy_source3: parseInt(dirHash.slice(8, 12), 16) % 8000,
+          low_entropy_source3: lowEntropy,
           limited_entropy_randomization_source: dirHash.slice(12, 44).toUpperCase()
         };
       }
@@ -445,7 +554,7 @@ class MultiZenService {
         const cur = JSON.parse(fs.readFileSync(curPath, 'utf8'));
         const candidate = path.join(MULTIZEN_CLOAK_DIR, cur.version, cur.binaryRelative || 'chrome.exe');
         if (fs.existsSync(candidate)) return candidate;
-      } catch (_) {}
+      } catch (_) { }
     }
     const fallback = path.join(MULTIZEN_CLOAK_DIR, '146.0.7680.177.5', 'chrome.exe');
     if (fs.existsSync(fallback)) return fallback;
@@ -535,6 +644,9 @@ class MultiZenService {
 
   static hasProfile(profileId) {
     if (!profileId || !fs.existsSync(MULTIZEN_DB_PATH)) return false;
+    const norm = String(profileId).trim().toLowerCase();
+    // BLINDAGEM ABSOLUTA DE REDE: PERFIL 04 (MATRIZ - IP Fixo) NUNCA pertence ao MultiZen 4G!
+    if (norm === '00000000-0000-0000-0000-000000000004') return false;
     try {
       const now = Date.now();
       if (!this._profileIdsSetCache || (now - (this._profileIdsSetAt || 0) > 10000)) {
@@ -560,7 +672,7 @@ class MultiZenService {
       try {
         const prof = this.getProfile(cleanId);
         if (prof && prof.data_dir) candidates.push(String(prof.data_dir).trim());
-      } catch (_) {}
+      } catch (_) { }
     }
     candidates.push(path.join(MULTIZEN_PROFILES_ROOT, cleanId));
     if (process.env.APPDATA) {
@@ -578,9 +690,9 @@ class MultiZenService {
         let fp = {};
         let proxy = null;
         let tags = [];
-        try { fp = JSON.parse(r.fingerprint || '{}'); } catch (_) {}
-        try { proxy = r.proxy ? JSON.parse(r.proxy) : null; } catch (_) {}
-        try { tags = JSON.parse(r.tags || '[]'); } catch (_) {}
+        try { fp = JSON.parse(r.fingerprint || '{}'); } catch (_) { }
+        try { proxy = r.proxy ? JSON.parse(r.proxy) : null; } catch (_) { }
+        try { tags = JSON.parse(r.tags || '[]'); } catch (_) { }
         const runningInfo = activeMultiZenProcesses.get(r.id) || null;
         const lockedByKernel = Boolean(runningInfo) || this.isProfileLockedByKernel(r.id, r.data_dir);
         let detectedPort = runningInfo ? runningInfo.port : null;
@@ -600,7 +712,7 @@ class MultiZenService {
                 }
               }
             }
-          } catch (_) {}
+          } catch (_) { }
         }
         return {
           id: r.id,
@@ -687,7 +799,7 @@ class MultiZenService {
               browser: data.Browser || ''
             };
           }
-        } catch (_) {}
+        } catch (_) { }
         activeMultiZenProcesses.delete(cleanId);
       }
 
@@ -705,7 +817,7 @@ class MultiZenService {
                   require('child_process').execFileSync('taskkill.exe', ['/PID', String(sess.pid), '/T', '/F'], { stdio: 'ignore', timeout: 3000, windowsHide: true });
                 }
                 fs.unlinkSync(sessionFile);
-              } catch (_) {}
+              } catch (_) { }
               activeMultiZenProcesses.delete(cleanId);
               return null;
             }
@@ -733,7 +845,7 @@ class MultiZenService {
                 };
               }
             }
-          } catch (_) {}
+          } catch (_) { }
         }
 
         const portFile = fs.existsSync(path.join(engineDir, 'DevToolsActivePort'))
@@ -802,7 +914,7 @@ class MultiZenService {
                   try {
                     fs.writeFileSync(path.join(primaryEngineDir, 'DevToolsActivePort'), `${pPort}\n/devtools/browser/${cleanId}\n`, 'utf8');
                     fs.writeFileSync(path.join(primaryEngineDir, 'multizen_session.json'), JSON.stringify(info, null, 2), 'utf8');
-                  } catch (_) {}
+                  } catch (_) { }
                   return {
                     cdp_url: cdpUrl,
                     port: pPort,
@@ -814,9 +926,9 @@ class MultiZenService {
               }
             }
           }
-        } catch (_) {}
+        } catch (_) { }
       }
-    } catch (_) {}
+    } catch (_) { }
     return null;
   }
 
@@ -843,9 +955,9 @@ class MultiZenService {
       let fp = {};
       let proxy = null;
       let tags = [];
-      try { fp = JSON.parse(r.fingerprint || '{}'); } catch (_) {}
-      try { proxy = r.proxy ? JSON.parse(r.proxy) : null; } catch (_) {}
-      try { tags = JSON.parse(r.tags || '[]'); } catch (_) {}
+      try { fp = JSON.parse(r.fingerprint || '{}'); } catch (_) { }
+      try { proxy = r.proxy ? JSON.parse(r.proxy) : null; } catch (_) { }
+      try { tags = JSON.parse(r.tags || '[]'); } catch (_) { }
       return {
         id: r.id,
         profile_browser_ID: r.id,
@@ -1004,18 +1116,17 @@ class MultiZenService {
       throw new Error('Binário do navegador (Chrome Oficial ou CloakBrowser) não encontrado.');
     }
 
-    if (isNativeChromeProfile) {
-      seedOfficialChromeVariationsAndTrustTokens(browserDataDir);
-    }
+    const fp = prof.fingerprint || buildRealisticFingerprint(cleanId);
+    const seed = computeNumericFingerprintSeed(cleanId, fp);
+
+    seedOfficialChromeVariationsAndTrustTokens(browserDataDir, seed);
     // Higieniza supercookies de rede (Reporting & NEL, QUIC broken_alternative_services) e blinda Preferences antes do launch
-    sanitizeMultiZenDiskBeforeLaunch(browserDataDir);
+    sanitizeMultiZenDiskBeforeLaunch(browserDataDir, seed, fp);
 
     if (process.env.ANTIGRAVITY_AGENT === '1') {
       onLog(`⚠️ [AVISO DE TELA VISÍVEL] O servidor do Hub está rodando na sessão em segundo plano da IDE. Para a janela do navegador abrir visível no seu monitor, dê 2 cliques em ABRIR_HUB_CENTRAL_001.bat!`);
     }
 
-    const fp = prof.fingerprint || buildRealisticFingerprint(cleanId);
-    const seed = computeNumericFingerprintSeed(cleanId, fp);
     const acceptLang = Array.isArray(fp.languages) && fp.languages.length > 0
       ? fp.languages.join(',')
       : 'pt-BR,pt,en-US,en';
@@ -1025,30 +1136,48 @@ class MultiZenService {
     const geoLat = fp.geolocation && typeof fp.geolocation.latitude === 'number' ? fp.geolocation.latitude : -19.7472;
     const geoLon = fp.geolocation && typeof fp.geolocation.longitude === 'number' ? fp.geolocation.longitude : -47.9381;
 
+    const isMatrixFixedIp = cleanId.toLowerCase() === '00000000-0000-0000-0000-000000000004';
+    if (isMatrixFixedIp && process.env.FORCE_MULTIZEN_MATRIZ !== '1') {
+      throw new Error('🚨 [FIREWALL DE REDE] PERFIL 04 (MATRIZ) é exclusivo do Incogniton em IP Fixo (WITHOUT_PROXY) — bloqueado no MultiZen 4G!');
+    }
+
+    // FAIL-CLOSED 4G PROXY: Todo perfil 4G no MultiZen OBRIGATORIAMENTE usa o túnel 127.0.0.1:8080 (jamais cai para o Wi-Fi fixo se prof.proxy vier nulo!)
+    const effectiveProxy = isMatrixFixedIp
+      ? null
+      : (prof.proxy && prof.proxy.host && prof.proxy.port
+          ? prof.proxy
+          : { protocol: 'http', host: '127.0.0.1', port: 8080 });
+
     let args;
     if (isNativeChromeProfile) {
+      const hwProf = selectOfficialChromeHardwareProfile(seed, fp);
       args = [
         `--user-data-dir=${browserDataDir}`,
         `--remote-debugging-port=${port}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--restore-last-session'
+        '--restore-last-session',
+        ...hwProf.cli_flags
       ];
-      if (prof.proxy && prof.proxy.host && prof.proxy.port) {
-        const proto = prof.proxy.protocol || 'http';
-        let effHost = prof.proxy.host;
-        let effPort = prof.proxy.port;
+      if (isMatrixFixedIp) {
+        args.push('--no-proxy-server');
+      } else if (effectiveProxy) {
+        const proto = effectiveProxy.protocol || 'http';
+        let effHost = effectiveProxy.host;
+        let effPort = effectiveProxy.port;
         if (effHost === '127.0.0.1' && Number(effPort) === 8080) {
           try {
             const ipv4Bridge = require('./modules/infra_4g/ipv4_proxy_bridge');
             await ipv4Bridge.ensureIpv4ProxyBridgeRunning(onLog);
             effPort = ipv4Bridge.BRIDGE_PORT;
-          } catch (_) {}
+          } catch (_) { }
         }
         args.push('--disable-quic');
         args.push(`--proxy-server=${proto}://${effHost}:${effPort}`);
+        args.push('--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1');
       }
     } else {
+      const hwGeom = selectOfficialChromeHardwareProfile(seed, fp);
       args = [
         `--user-data-dir=${browserDataDir}`,
         `--remote-debugging-port=${port}`,
@@ -1058,7 +1187,7 @@ class MultiZenService {
         '--disable-features=Translate,MediaRouter',
         `--lang=${fp.locale || 'pt-BR'}`,
         `--accept-lang=${acceptLang}`,
-        '--window-position=20,20',
+        `--window-position=${hwGeom.window_x},${hwGeom.window_y}`,
         `--window-size=${screenW},${screenH}`,
         `--fingerprint=${seed}`,
         '--fingerprint-platform=windows',
@@ -1076,22 +1205,26 @@ class MultiZenService {
       if (fp.webgl && fp.webgl.renderer) {
         args.push(`--fingerprint-gpu-renderer=${fp.webgl.renderer}`);
       }
+      args.push('--fingerprint-brand=Chrome');
       args.push('--fingerprint-brand-version=146.0.7680.177');
       args.push('--fingerprint-platform-version=15.0.0');
 
-      if (prof.proxy && prof.proxy.host && prof.proxy.port) {
-        const proto = prof.proxy.protocol || 'http';
-        let effHost = prof.proxy.host;
-        let effPort = prof.proxy.port;
+      if (isMatrixFixedIp) {
+        args.push('--no-proxy-server');
+      } else if (effectiveProxy) {
+        const proto = effectiveProxy.protocol || 'http';
+        let effHost = effectiveProxy.host;
+        let effPort = effectiveProxy.port;
         if (effHost === '127.0.0.1' && Number(effPort) === 8080) {
           try {
             const ipv4Bridge = require('./modules/infra_4g/ipv4_proxy_bridge');
             const brStatus = await ipv4Bridge.ensureIpv4ProxyBridgeRunning(onLog);
             if (brStatus && brStatus.running) effPort = ipv4Bridge.BRIDGE_PORT;
-          } catch (_) {}
+          } catch (_) { }
         }
         args.push('--fingerprint-webrtc-ip=auto');
         args.push(`--proxy-server=${proto}://${effHost}:${effPort}`);
+        args.push('--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1');
         args.push('--disable-quic');
         args.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
         args.push('--enforce-webrtc-ip-permission-check');
@@ -1124,7 +1257,7 @@ class MultiZenService {
       db.prepare('UPDATE profiles SET last_opened_at = ?, updated_at = ? WHERE id = ?')
         .run(new Date().toISOString(), new Date().toISOString(), cleanId);
       db.close();
-    } catch (_) {}
+    } catch (_) { }
 
     const cdpUrl = `http://127.0.0.1:${port}`;
     for (let i = 0; i < 30; i++) {
@@ -1143,11 +1276,11 @@ class MultiZenService {
           try {
             fs.writeFileSync(path.join(browserDataDir, 'DevToolsActivePort'), `${port}\n/devtools/browser/${cleanId}\n`, 'utf8');
             fs.writeFileSync(path.join(browserDataDir, 'multizen_session.json'), JSON.stringify(info, null, 2), 'utf8');
-          } catch (_) {}
+          } catch (_) { }
           onLog(`✅ [MultiZen CloakBrowser C++] Perfil "${prof.name}" pronto em ${cdpUrl} (PID ${child.pid})!`);
           return { cdp_url: cdpUrl, port, pid: child.pid, engine: 'cloakbrowser' };
         }
-      } catch (_) {}
+      } catch (_) { }
       await new Promise(r => setTimeout(r, 500));
     }
 
@@ -1200,18 +1333,17 @@ class MultiZenService {
     for (const f of ['DevToolsActivePort', 'multizen_session.json']) {
       const p = path.join(browserDataDir, f);
       if (fs.existsSync(p)) {
-        try { fs.unlinkSync(p); } catch (_) {}
+        try { fs.unlinkSync(p); } catch (_) { }
       }
     }
 
-    if (useOfficialChrome) {
-      seedOfficialChromeVariationsAndTrustTokens(browserDataDir);
-    }
-    // Vacina forense de disco pré-launch (Reporting & NEL, QUIC broken_alternative_services, WebRTC, DoH, DPR 1.0)
-    sanitizeMultiZenDiskBeforeLaunch(browserDataDir);
-
     const fp = prof.fingerprint || buildRealisticFingerprint(cleanId);
     const seed = computeNumericFingerprintSeed(cleanId, fp);
+
+    seedOfficialChromeVariationsAndTrustTokens(browserDataDir, seed);
+    // Vacina forense de disco pré-launch (Reporting & NEL, QUIC broken_alternative_services, WebRTC, DoH, Geometria por Seed, DPR 1.0)
+    sanitizeMultiZenDiskBeforeLaunch(browserDataDir, seed, fp);
+
     const acceptLang = Array.isArray(fp.languages) && fp.languages.length > 0
       ? fp.languages.join(',')
       : 'pt-BR,pt,en-US,en';
@@ -1236,21 +1368,32 @@ class MultiZenService {
         const ipv4Bridge = require('./modules/infra_4g/ipv4_proxy_bridge');
         await ipv4Bridge.ensureIpv4ProxyBridgeRunning(onLog);
         proxyPort = ipv4Bridge.BRIDGE_PORT;
-      } catch (_) {}
+      } catch (_) { }
     }
 
+    const isMatrixFixedIpZero = cleanId.toLowerCase() === '00000000-0000-0000-0000-000000000004';
+    const hwProf = selectOfficialChromeHardwareProfile(seed, fp);
     let args;
     if (useOfficialChrome) {
-      // GOOGLE CHROME OFICIAL 157+ ASSINADO PELA GOOGLE LLC (ZERO-CDP + X-Client-Data + VariationsSeedV2 + PONTE 4G IPv4 PURO):
+      // GOOGLE CHROME OFICIAL 157+ ASSINADO PELA GOOGLE LLC:
+      // - ZERO-CDP + X-Client-Data Único por Seed + VariationsSeedV2 + Ponte 4G IPv4 Puro (:8082)
+      // - Rotação Real Dual-Silicon (AMD Radeon 680M <-> NVIDIA RTX 4050 + d3d11/d3d11on12 + Viewport Único)
+      // - WebRTC e DoH já blindados silenciosamente via Default/Preferences (zero flags suspeitas na linha de comando!)
       args = [
         `--user-data-dir=${browserDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
         '--new-window',
         '--disable-quic',
-        `--proxy-server=${proxyProto}://${proxyHost}:${proxyPort}`,
-        ...urlList
+        ...hwProf.cli_flags
       ];
+      if (isMatrixFixedIpZero) {
+        args.push('--no-proxy-server');
+      } else {
+        args.push(`--proxy-server=${proxyProto}://${proxyHost}:${proxyPort}`);
+        args.push('--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1');
+      }
+      args.push(...urlList);
     } else {
       args = [
         `--user-data-dir=${browserDataDir}`,
@@ -1258,10 +1401,10 @@ class MultiZenService {
         '--no-default-browser-check',
         '--new-window',
         '--disable-quic',
-        '--disable-features=Translate,MediaRouter,DnsOverHttps,DnsOverHttpsUpgrade',
+        '--disable-features=Translate,MediaRouter',
         `--lang=${fp.locale || 'pt-BR'}`,
         `--accept-lang=${acceptLang}`,
-        '--window-position=20,20',
+        `--window-position=${hwProf.window_x},${hwProf.window_y}`,
         `--window-size=${screenW},${screenH}`,
         `--fingerprint=${seed}`,
         '--fingerprint-platform=windows',
@@ -1279,19 +1422,25 @@ class MultiZenService {
       if (fp.webgl && fp.webgl.renderer) {
         args.push(`--fingerprint-gpu-renderer=${fp.webgl.renderer}`);
       }
+      args.push('--fingerprint-brand=Chrome');
       args.push('--fingerprint-brand-version=146.0.7680.177');
       args.push('--fingerprint-platform-version=15.0.0');
-      args.push('--fingerprint-webrtc-ip=auto');
-      args.push(`--proxy-server=${proxyProto}://${proxyHost}:${proxyPort}`);
-      args.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
-      args.push('--enforce-webrtc-ip-permission-check');
-      args.push('--dns-over-https-mode=off');
+      if (isMatrixFixedIpZero) {
+        args.push('--no-proxy-server');
+      } else {
+        args.push('--fingerprint-webrtc-ip=auto');
+        args.push(`--proxy-server=${proxyProto}://${proxyHost}:${proxyPort}`);
+        args.push('--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1');
+        args.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
+        args.push('--enforce-webrtc-ip-permission-check');
+        args.push('--dns-over-https-mode=off');
+      }
       for (const u of urlList) {
         args.push(u);
       }
     }
 
-    onLog(`🎬 [Google Chrome Oficial 157+ ZERO-CDP] Abrindo "${prof.name}" (${cleanId}) em ${urlList.join(' + ')} [Engine: ${useOfficialChrome ? 'Official Google Chrome 157 (X-Client-Data + VariationsSeedV2)' : 'CloakBrowser'} | Proxy 4G ${proxyHost}:${proxyPort} | SEM CDP]...`);
+    onLog(`🎬 [PC Zero-QR-Code • ZERO-CDP] Abrindo "${prof.name}" (${cleanId}) em ${urlList.join(' + ')} [Engine: ${useOfficialChrome ? `Official Chrome 157 (${hwProf.silicon_family} • ${hwProf.angle_backend} • X-Client-Data #${seed})` : `CloakBrowser C++ (Seed #${seed})`} | Proxy 4G IPv4 ${proxyHost}:${proxyPort}]...`);
 
     const child = spawn(binPath, args, {
       detached: true,
@@ -1317,7 +1466,7 @@ class MultiZenService {
     activeMultiZenProcesses.set(cleanId, info);
     try {
       fs.writeFileSync(path.join(browserDataDir, 'multizen_session.json'), JSON.stringify(info, null, 2), 'utf8');
-    } catch (_) {}
+    } catch (_) { }
 
     if (child && typeof child.on === 'function') {
       child.on('exit', () => {
@@ -1325,7 +1474,7 @@ class MultiZenService {
         try {
           const sPath = path.join(browserDataDir, 'multizen_session.json');
           if (fs.existsSync(sPath)) fs.unlinkSync(sPath);
-        } catch (_) {}
+        } catch (_) { }
       });
     }
 
@@ -1334,7 +1483,7 @@ class MultiZenService {
       db.prepare('UPDATE profiles SET last_opened_at = ?, updated_at = ? WHERE id = ?')
         .run(new Date().toISOString(), new Date().toISOString(), cleanId);
       db.close();
-    } catch (_) {}
+    } catch (_) { }
 
     await new Promise(r => setTimeout(r, 1200));
 
@@ -1374,7 +1523,7 @@ class MultiZenService {
           { timeout: 3500, stdio: 'ignore', windowsHide: true }
         );
       }
-    } catch (_) {}
+    } catch (_) { }
 
     await new Promise(r => setTimeout(r, 2000));
     await this.stopProfile(cleanId, onLog);
@@ -1383,7 +1532,7 @@ class MultiZenService {
         const baseDir = path.join(MULTIZEN_PROFILES_ROOT, cleanId);
         const engineDir = resolveEngineDataDir(baseDir);
         sanitizeMultiZenDiskBeforeLaunch(engineDir);
-      } catch (_) {}
+      } catch (_) { }
     }
     return true;
   }
@@ -1425,12 +1574,12 @@ class MultiZenService {
         await new Promise((resolve) => {
           const t = setTimeout(resolve, 1500);
           ws.on('open', () => {
-            try { ws.send(JSON.stringify({ id: 1, method: 'Browser.close', params: {} })); } catch (_) {}
-            setTimeout(() => { clearTimeout(t); try { ws.close(); } catch (_) {} resolve(); }, 600);
+            try { ws.send(JSON.stringify({ id: 1, method: 'Browser.close', params: {} })); } catch (_) { }
+            setTimeout(() => { clearTimeout(t); try { ws.close(); } catch (_) { } resolve(); }, 600);
           });
           ws.on('error', () => { clearTimeout(t); resolve(); });
         });
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const { execFileSync } = require('child_process');
@@ -1441,7 +1590,7 @@ class MultiZenService {
         execFileSync('taskkill.exe', ['/F', '/T', '/PID', String(info.pid)], { timeout: 3500, stdio: 'ignore', windowsHide: true });
         onLog(`🛑 [MultiZen CloakBrowser C++] Árvore do processo PID ${info.pid} do perfil ${cleanId.slice(0, 8)} encerrada.`);
       } catch (_) {
-        try { process.kill(info.pid); } catch (_) {}
+        try { process.kill(info.pid); } catch (_) { }
       }
     }
     activeMultiZenProcesses.delete(cleanId);
@@ -1460,7 +1609,7 @@ class MultiZenService {
             ],
             { timeout: 3500, stdio: 'ignore', windowsHide: true }
           );
-        } catch (_) {}
+        } catch (_) { }
       }
       if (!this.isProfileLockedByKernel(cleanId)) break;
       await new Promise(r => setTimeout(r, 300));
@@ -1472,10 +1621,10 @@ class MultiZenService {
       for (const f of ['DevToolsActivePort', 'multizen_session.json']) {
         const p = path.join(engineDir, f);
         if (fs.existsSync(p)) {
-          try { fs.unlinkSync(p); } catch (_) {}
+          try { fs.unlinkSync(p); } catch (_) { }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return true;
   }
@@ -1495,7 +1644,7 @@ class MultiZenService {
       const updateStmt = db.prepare('UPDATE profiles SET fingerprint = ? WHERE id = ?');
       for (const r of rows) {
         let fp = {};
-        try { fp = JSON.parse(r.fingerprint || '{}'); } catch (_) {}
+        try { fp = JSON.parse(r.fingerprint || '{}'); } catch (_) { }
         const rebuilt = buildRealisticFingerprint(r.id, {
           screen: fp.screen,
           webgl: fp.webgl,
@@ -1528,6 +1677,7 @@ class MultiZenService {
 MultiZenService.MultiZenService = MultiZenService;
 MultiZenService.sanitizeMultiZenDiskBeforeLaunch = sanitizeMultiZenDiskBeforeLaunch;
 MultiZenService.seedOfficialChromeVariationsAndTrustTokens = seedOfficialChromeVariationsAndTrustTokens;
+MultiZenService.selectOfficialChromeHardwareProfile = selectOfficialChromeHardwareProfile;
 MultiZenService.GPU_PROFILES_WIN = GPU_PROFILES_WIN;
 MultiZenService.SCREEN_PROFILES = SCREEN_PROFILES;
 module.exports = MultiZenService;

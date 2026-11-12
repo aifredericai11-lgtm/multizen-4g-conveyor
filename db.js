@@ -12,6 +12,10 @@ const DEFAULT_STATE = {
     proxy_4g_host: process.env.PROXY_4G_HOST || '127.0.0.1',
     proxy_4g_port: Number(process.env.PROXY_4G_PORT) || 8080,
     proxy_bridge_port: Number(process.env.IPV4_BRIDGE_PORT) || 8082,
+    notebook_warmup_only_mode: true,
+    max_pages_per_profile_willas: 10,
+    willas_pages_per_session: 10,
+    willas_page_creation_pacing_7_10_min: true,
     daily_profile_session_by_id: {}
   },
   pages: []
@@ -20,10 +24,7 @@ const DEFAULT_STATE = {
 function readDbSafe() {
   try {
     if (!fs.existsSync(DB_PATH)) {
-      return {
-        settings: { ...DEFAULT_STATE.settings },
-        pages: []
-      };
+      return { settings: { ...DEFAULT_STATE.settings }, pages: [] };
     }
     const parsed = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
     return {
@@ -36,10 +37,7 @@ function readDbSafe() {
       pages: Array.isArray(parsed && parsed.pages) ? parsed.pages : []
     };
   } catch (_) {
-    return {
-      settings: { ...DEFAULT_STATE.settings },
-      pages: []
-    };
+    return { settings: { ...DEFAULT_STATE.settings }, pages: [] };
   }
 }
 
@@ -49,31 +47,34 @@ function writeDbSafe(data) {
   fs.renameSync(tmpPath, DB_PATH);
 }
 
-function getState() {
-  return readDbSafe();
-}
-
-function saveState(nextState) {
-  writeDbSafe(nextState);
-  return nextState;
-}
-
-function getPages() {
-  return readDbSafe().pages;
-}
-
-function getSettings() {
-  return readDbSafe().settings;
-}
+function getState() { return readDbSafe(); }
+function saveState(nextState) { writeDbSafe(nextState); return nextState; }
+function getPages() { return readDbSafe().pages; }
+function getSettings() { return readDbSafe().settings; }
 
 function updateSettings(patch = {}) {
   const state = readDbSafe();
-  state.settings = {
-    ...state.settings,
-    ...patch
-  };
+  state.settings = { ...state.settings, ...patch };
   writeDbSafe(state);
   return state.settings;
+}
+
+function addPage(pageObj = {}) {
+  const state = readDbSafe();
+  const id = pageObj.id || `page_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  const created = { id, active: true, warming_day: 1, posts_today: 0, ...pageObj };
+  state.pages.push(created);
+  writeDbSafe(state);
+  return created;
+}
+
+function updatePage(pageId, patch = {}) {
+  const state = readDbSafe();
+  const idx = state.pages.findIndex(p => p && (p.id === pageId || p.name === pageId));
+  if (idx === -1) return null;
+  state.pages[idx] = { ...state.pages[idx], ...patch };
+  writeDbSafe(state);
+  return state.pages[idx];
 }
 
 module.exports = {
@@ -81,6 +82,8 @@ module.exports = {
   getState,
   saveState,
   getPages,
+  addPage,
+  updatePage,
   getSettings,
   updateSettings
 };

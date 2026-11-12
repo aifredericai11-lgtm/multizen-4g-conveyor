@@ -1,7 +1,7 @@
 {
   "name": "multizen-4g-conveyor",
-  "version": "1.0.0",
-  "description": "4G USB ADB Rotator + Pure IPv4 Proxy Bridge (:8082 -> :8080) + MultiZen Dual-Browser Profile Manager & Account Warmup Conveyor",
+  "version": "2.0.0",
+  "description": "Esteira 4G Completa de Criacao & Aquecimento: Rotacao 4G ADB (1 Conta = 1 IP Exclusivo), Ponte IPv4 Pura (:8082), Dual-GPU Zero-CDP Gmail/Outlook Creator, Aquecimento Perfil 2-3d e Aquecimento Ideal 7d (Post Cruzado MBS + Story 2.2s + Collab)",
   "main": "multizen.js",
   "type": "commonjs",
   "engines": {
@@ -13,7 +13,8 @@
     "infra:bridge": "node modules/infra_4g/zerum_adspower_4g_bridge.js",
     "warmup:help": "node modules/account_warmup/runner.js --help",
     "warmup:step1": "node modules/account_warmup/runner.js --create-step1",
-    "warmup:status": "node modules/account_warmup/runner.js --pipeline"
+    "warmup:status": "node modules/account_warmup/runner.js --pipeline",
+    "warmup:conveyor": "node -e \"require('./modules/account_warmup/willas_page_warmer').runWillasFullWarmupConveyor({}, (l,m)=>console.log('['+l+'] '+m))\""
   },
   "dependencies": {
     "puppeteer-core": "^25.14.0",

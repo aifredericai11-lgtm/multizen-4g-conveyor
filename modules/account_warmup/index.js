@@ -1,3 +1,5 @@
+'use strict';
+
 const gmailAuthenticator = require('./gmail_authenticator');
 const newsletterWarmer = require('./newsletter_warmer');
 const metaPixelWarmer = require('./meta_pixel_warmer');
@@ -7,6 +9,8 @@ const lifecyclePipeline = require('./lifecycle_pipeline');
 const profileReelsWarmer = require('./profile_reels_warmer');
 const fingerprintGenerator = require('./fingerprint_generator');
 const gmailCreator = require('./gmail_creator');
+const hubVideoUploader = require('./hub_video_uploader');
+const willasPageWarmer = require('./willas_page_warmer');
 const {
   runAccountWarmup,
   resolveAccountFromPipeline,
@@ -26,12 +30,15 @@ module.exports = {
   profileReelsWarmer,
   fingerprintGenerator,
   gmailCreator,
+  hubVideoUploader,
+  willasPageWarmer,
   ...emailDomainValidator,
   ...lifecyclePipeline,
   ...profileReelsWarmer,
   ...fingerprintGenerator,
   ...gmailCreator,
   ...batchPlanner,
+  ...willasPageWarmer,
   runAccountWarmup,
   resolveAccountFromPipeline,
   openYoutubeCreationSlot,

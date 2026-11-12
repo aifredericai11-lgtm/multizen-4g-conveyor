@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Esteira 4G — Criação & Aquecimento Automatizado (Arquitetura Completa)</title>
+  <style>
+    :root {
+      --bg-0: #070a09;
+      --bg-1: #0c1210;
+      --bg-2: #111916;
+      --bg-3: #17221e;
+      --border: rgba(159, 232, 112, 0.16);
+      --border-strong: rgba(159, 232, 112, 0.42);
+      --lime: #9fe870;
+      --lime-dim: rgba(159, 232, 112, 0.12);
+      --cyan: #38bdf8;
+      --cyan-dim: rgba(56, 189, 248, 0.12);
+      --amber: #fbbf24;
+      --amber-dim: rgba(251, 191, 36, 0.12);
+      --rose: #fb7185;
+      --rose-dim: rgba(251, 113, 133, 0.12);
+      --violet: #c084fc;
+      --violet-dim: rgba(192, 132, 252, 0.12);
+      --text-1: #f4f6f5;
+      --text-2: #b5c0bc;
+      --text-3: #7d8b86;
+      --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-0);
+      background-image:
+        radial-gradient(circle at 15% 0%, rgba(159, 232, 112, 0.07) 0%, transparent 42%),
+        radial-gradient(circle at 85% 10%, rgba(56, 189, 248, 0.06) 0%, transparent 38%);
+      color: var(--text-1);
+      font-family: var(--sans);
+      line-height: 1.55;
+      padding: 28px 18px 64px;
+    }
+
+    .container {
+      max-width: 1220px;
+      margin: 0 auto;
+    }
+
+    /* TOPBAR / HERO */
+    .hero {
+      background: linear-gradient(145deg, var(--bg-2) 0%, var(--bg-1) 100%);
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      padding: 28px 30px;
+      margin-bottom: 22px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+    .pill.lime { background: var(--lime-dim); color: var(--lime); border-color: rgba(159, 232, 112, 0.35); }
+    .pill.cyan { background: var(--cyan-dim); color: var(--cyan); border-color: rgba(56, 189, 248, 0.35); }
+    .pill.amber { background: var(--amber-dim); color: var(--amber); border-color: rgba(251, 191, 36, 0.35); }
+    .pill.rose { background: var(--rose-dim); color: var(--rose); border-color: rgba(251, 113, 133, 0.35); }
+    .pill.violet { background: var(--violet-dim); color: var(--violet); border-color: rgba(192, 132, 252, 0.35); }
+
+    .hero h1 {
+      font-size: clamp(22px, 3vw, 31px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .hero h1 span { color: var(--lime); }
+    .hero p {
+      color: var(--text-2);
+      font-size: 14.5px;
+      max-width: 920px;
+    }
+
+    /* KPI BAR */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 15px 16px;
+    }
+    .kpi-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-3);
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+    .kpi-value {
+      font-size: 20px;
+      font-weight: 800;
+      font-family: var(--mono);
+      color: var(--lime);
+    }
+    .kpi-sub {
+      font-size: 11.5px;
+      color: var(--text-2);
+      margin-top: 3px;
+    }
+
+    /* SECTION HEADERS */
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 30px 0 14px;
+    }
+    .section-title h2 {
+      font-size: 18px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .section-title small {
+      color: var(--text-3);
+      font-size: 12.5px;
+    }
+
+    /* DUAL MACHINE ISOLATION */
+    .split-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .machine-card {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+    }
+    .machine-card.primary-4g {
+      border-color: var(--border-strong);
+      background: linear-gradient(160deg, rgba(159, 232, 112, 0.06) 0%, var(--bg-1) 60%);
+    }
+    .machine-card h3 {
+      font-size: 15.5px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .check-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+    .check-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .check-list li b { color: var(--text-1); }
+
+    /* PIPELINE TABS / INTERACTIVE STEPPER */
+    .stepper-nav {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .step-tab {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 12px 13px;
+      text-align: left;
+      cursor: pointer;
+      color: var(--text-2);
+      transition: all 0.16s ease;
+      font-family: inherit;
+    }
+    .step-tab:hover {
+      border-color: rgba(159, 232, 112, 0.35);
+      background: var(--bg-2);
+    }
+    .step-tab.active {
+      background: rgba(159, 232, 112, 0.11);
+      border-color: var(--lime);
+      color: var(--text-1);
+      box-shadow: 0 0 22px rgba(159, 232, 112, 0.12);
+    }
+    .step-tab .num {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--lime);
+      display: block;
+      margin-bottom: 3px;
+    }
+    .step-tab .title {
+      font-size: 13px;
+      font-weight: 800;
+      display: block;
+    }
+    .step-tab .dur {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 2px;
+      display: block;
+    }
+
+    .stage-panel {
+      display: none;
+      background: var(--bg-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      padding: 24px;
+      animation: fadeIn 0.18s ease;
+    }
+    .stage-panel.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 16px;
+    }
+    .stage-header h3 { font-size: 18px; color: var(--lime); }
+    .stage-header p { font-size: 13.5px; color: var(--text-2); margin-top: 4px; }
+
+    .cards-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .sub-box {
+      background: var(--bg-1);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 11px;
+      padding: 15px;
+    }
+    .sub-box h4 {
+      font-size: 13.5px;
+      margin-bottom: 7px;
+      color: var(--text-1);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sub-box p, .sub-box li {
+      font-size: 12.5px;
+      color: var(--text-2);
+    }
+    .sub-box ul {
+      padding-left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      background: rgba(159, 232, 112, 0.1);
+      color: var(--lime);
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+
+    /* ALGORITHM FUNNEL */
+    .funnel-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .funnel-step {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 14px;
+      position: relative;
+    }
+    .funnel-step strong {
+      display: block;
+      font-family: var(--mono);
+      font-size: 15px;
+      color: var(--cyan);
+      margin-bottom: 4px;
+    }
+    .funnel-step span {
+      font-size: 12px;
+      color: var(--text-2);
+    }
+
+    /* 25 COUNTRIES CHIPS */
+    .country-box {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      padding: 18px;
+      margin-top: 14px;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+    .chip {
+      font-size: 11.5px;
+      font-family: var(--mono);
+      padding: 4px 9px;
+      border-radius: 7px;
+      background: rgba(251, 113, 133, 0.1);
+      border: 1px solid rgba(251, 113, 133, 0.28);
+      color: #fecdd3;
+    }
+
+    /* TABLE */
+    .table-wrap {
+      overflow-x: auto;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.8px;
+    }
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    th {
+      background: var(--bg-2);
+      color: var(--lime);
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:last-child td { border-bottom: none; }
+    td { color: var(--text-2); }
+    td strong { color: var(--text-1); }
+
+    .btn-copy {
+      background: var(--lime-dim);
+      color: var(--lime);
+      border: 1px solid rgba(159, 232, 112, 0.4);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-copy:hover { background: rgba(159, 232, 112, 0.22); }
+
+    .alert-strip {
+      margin-top: 16px;
+      padding: 13px 16px;
+      border-radius: 10px;
+      background: rgba(251, 191, 36, 0.09);
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      color: #fde68a;
+      font-size: 12.8px;
+    }
+
+    .footer {
+      margin-top: 34px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-3);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- HERO -->
+    <header class="hero">
+      <div class="hero-badges">
+        <span class="pill lime">⚡ ESTEIRA 1-CLIQUE • 4G USB ROTATIVO</span>
+        <span class="pill cyan">🛡️ 1 CONTA = 1 IP 4G EXCLUSIVO</span>
+        <span class="pill amber">🧬 DUAL-GPU + X-CLIENT-DATA ÚNICO (ZERO-CDP)</span>
+        <span class="pill violet">📈 PADRÃO IDEAL: 10 PÁGINAS/CONTA • 7 DIAS AQUECIMENTO</span>
+      </div>
+      <h1>Arquitetura Completa de <span>Criação &amp; Aquecimento 4G</span></h1>
+      <p>
+        Mapa visual ponta a ponta do motor automatizado: desde o nascimento da conta no PC sem QR Code (Gmail Principal em Zero-CDP + Reserva Outlook),
+        passando pelo aquecimento do Perfil Mãe (2–3 dias), estruturação de até <b>10 Fan Pages por conta na mesma sessão/IP</b> (~5m ficha + 2m pausa offline mesmo-IP),
+        até os <b>7 dias ideais de aquecimento no nicho em Inglês</b> via Post Cruzado (1 upload p/ 10 páginas), Stories de 2.2s e Collab.
+      </p>
+    </header>
+
+    <!-- KPI SUMMARY -->
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Isolamento de Rede</div>
+        <div class="kpi-value">1 Conta = 1 IP</div>
+        <div class="kpi-sub">Giro Modo Avião ADB + Livro-Razão anti-repetição CGNAT</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Criação E-mail / FB</div>
+        <div class="kpi-value">Zero-CDP</div>
+        <div class="kpi-sub">Gmail Principal (Dual-GPU + IPv4 :8082) • Outlook Reserva</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Perfil Pessoal Mãe</div>
+        <div class="kpi-value">2 a 3 Dias</div>
+        <div class="kpi-sub">2FA + Modo Profissional + 9 Reels curtos (~1.000 views)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Expansão por Conta</div>
+        <div class="kpi-value">10 Páginas</div>
+        <div class="kpi-sub">~5m estruturação + 2m pausa offline (0 KB 4G / Mesmo IP)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Aquecimento Página</div>
+        <div class="kpi-value">7 Dias Ideal</div>
+        <div class="kpi-sub">Post imediato em Inglês • 1 Upload Post Cruzado p/ as 10</div>
+      </div>
+    </section>
+
+    <!-- SEPARAÇÃO FÍSICA -->
+    <div class="section-title">
+      <h2>🖥️ 1. Separação Física de Máquinas &amp; Blindagem de Rede</h2>
+      <small>Zero cruzamento entre esteira de criação/aquecimento 4G e operação principal</small>
+    </div>
+    <section class="split-2">
+      <div class="machine-card primary-4g">
+        <h3>📱 Máquina 01 — Fábrica 4G (Criação + Aquecimento Puro) <span class="pill lime">ESTE REPOSITÓRIO</span></h3>
+        <ul class="check-list">
+          <li><span>✅</span><span><b>Rede 100% 4G USB (Fail-Closed):</b> Android via ADB (<code>Every Proxy :8080</code> &rarr; Ponte IPv4 Pura <code>:8082</code>) com <code>--host-resolver-rules</code> (se o 4G piscar, bloqueia tráfego e jamais vaza Wi-Fi residencial).</span></li>
+          <li><span>✅</span><span><b>Sessão Linear Completa por Conta:</b> Gira 4G &rarr; trava <code>IP A</code> inédito &rarr; faz 100% da <b>Conta 01</b> &rarr; fecha navegador &rarr; gira 4G p/ <code>IP B</code> inédito &rarr; abre <b>Conta 02</b>. Nunca pula e volta entre contas.</span></li>
+          <li><span>✅</span><span><b>Zero Link Comercial:</b> Dedicada exclusivamente a criar contas, maturar perfis e entregar páginas aquecidas de 7 dias com barra de integridade alta.</span></li>
+        </ul>
+      </div>
+      <div class="machine-card">
+        <h3>🏢 Máquina 02 — Operação Principal (Páginas Graduadas) <span class="pill cyan">ISOLADA</span></h3>
+        <ul class="check-list">
+          <li><span>🔒</span><span><b>Recebe Apenas Ativos Graduados:</b> Assume as contas/páginas depois dos <b>7 dias ideais de aquecimento</b> (ou mínimo 3–4 dias tracionando).</span></li>
+          <li><span>🔒</span><span><b>Transição Sem Apagar Histórico:</b> Jamais arquiva ou exclui os vídeos de aquecimento — começa a mesclar os criativos comerciais mantendo vídeos de engajamento/receita.</span></li>
+          <li><span>🔒</span><span><b>Contingência 2º Admin:</b> Páginas fortes recebem um perfil reserva sólido como segundo administrador para blindar o ativo caso um perfil-mãe sofra restrição.</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- INTERACTIVE 5-STAGE STEPPER -->
+    <div class="section-title">
+      <h2>⚙️ 2. Os 5 Estágios da Esteira (Clique em Cada Fase p/ Ver por Dentro)</h2>
+      <small>Fluxo contínuo automatizado — clique nos cards abaixo</small>
+    </div>
+
+    <div class="stepper-nav" role="tablist">
+      <button class="step-tab active" onclick="selectStage(0)" id="tab-0">
+        <span class="num">FASE 01</span>
+        <span class="title">Conta Mãe + Anti-QR</span>
+        <span class="dur">Gmail Principal • 2FA</span>
+      </button>
+      <button class="step-tab" onclick="selectStage(1)" id="tab-1">
+        <span class="num">FASE 02</span>
+        <span class="title">Aquecimento Perfil</span>
+        <span class="dur">Dias 1 a 3 • Pro Mode</span>
+      </button>
+      <button class="step-tab" onclick="selectStage(2)" id="tab-2">
+        <span class="num">FASE 03</span>
+        <span class="title">Criar 10 Páginas/Conta</span>
+        <span class="dur">~5m Ficha + 2m Mesmo IP</span>
+      </button>
+      <button class="step-tab" onclick="selectStage(3)" id="tab-3">
+        <span class="num">FASE 04</span>
+        <span class="title">Aquecimento 7 Dias</span>
+        <span class="dur">Post Cruzado + Story 2.2s</span>
+      </button>
+      <button class="step-tab" onclick="selectStage(4)" id="tab-4">
+        <span class="num">FASE 05</span>
+        <span class="title">Collab &amp; Graduação</span>
+        <span class="dur">Tração Cruzada • Transição</span>
+      </button>
+    </div>
+
+    <!-- PANEL 0 -->
+    <div class="stage-panel active" id="panel-0">
+      <div class="stage-header">
+        <div>
+          <h3>Fase 01 — Criação da Conta Mãe (Gmail Principal no PC + Reserva Outlook)</h3>
+          <p>Elimina gatilhos de BotGuard/QR Code na criação e já nasce com cookies primários <code>_fbp</code> + Autenticador 2FA.</p>
+        </div>
+        <span class="pill lime">Até 2 Perfis por IP • 100% Zero-CDP no Cadastro</span>
+      </div>
+      <div class="cards-3">
+        <div class="sub-box">
+          <h4>✉️ 1. Motor Principal: Gmail no PC</h4>
+          <ul>
+            <li>Gira o 4G USB garantindo IPv4 limpo na ponte <code>127.0.0.1:8082</code> (remove sufixo IPv6 <code>rmnet</code> e header <code>Via</code>).</li>
+            <li>Alterna GPU física (<code>D3D11 / D3D12</code>) + semente <code>X-Client-Data</code> exclusiva por perfil no <code>CloakBrowser C++</code>.</li>
+            <li>Abre em <b>Zero-CDP</b> (sem protocolo de automação anexado): digitação humana no teclado (sem <code>Ctrl+V</code>).</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🍪 2. Camada <code>_fbp</code> + Facebook + 2FA</h4>
+          <ul>
+            <li>No mesmo IP 4G, abre portais editoriais com Meta Pixel para gerar cookie <code>_fbp</code> legítimo antes do cadastro.</li>
+            <li>Cria o perfil Facebook e ativa imediatamente a <b>Verificação em Duas Etapas (2FA TOTP)</b> no cofre local.</li>
+            <li>Perfil verificado com 2FA é o pré-requisito número 1 de saúde para liberar 10+ páginas.</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🔄 3. Plano B (Sem Verba SMS): Outlook</h4>
+          <ul>
+            <li>Se acabar saldo de SMS em algum lote, um botão secundário gira o 4G e abre <code>signup.live.com</code> + <code>facebook.com/r.php</code>.</li>
+            <li>Passa sem QR Code do Google para o login do perfil, e na ficha da Fan Page usa um <code>@gmail.com</code> sintático (check verde imediato).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL 1 -->
+    <div class="stage-panel" id="panel-1">
+      <div class="stage-header">
+        <div>
+          <h3>Fase 02 — Aquecimento do Perfil Pessoal Mãe (Dias 1 a 3)</h3>
+          <p>Destrava o Trust Score de Criador para evitar o formulário capado de 2 campos (sem Bio) e recusas na criação de páginas.</p>
+        </div>
+        <span class="pill cyan">Meta: 2–3 Dias ou ~1.000 Views Acumuladas</span>
+      </div>
+      <div class="cards-3">
+        <div class="sub-box">
+          <h4>🛠️ Configuração Base do Perfil</h4>
+          <ul>
+            <li>Ativa o <b>Modo Profissional (Painel Profissional)</b> no perfil pessoal.</li>
+            <li>Assina <b>10 a 15 Newsletters</b> reais para movimentar a caixa de entrada do e-mail.</li>
+            <li>Atualiza Interesses, segue páginas grandes e adiciona sugestões de amigos de forma espaçada.</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🎬 9 Reels Curtos no Perfil (3/Dia)</h4>
+          <ul>
+            <li>No Perfil Pessoal o idioma/nicho é livre (ex.: vídeos curtos de 8–20s com alta retenção).</li>
+            <li>Posta 1 ao vivo + 2 programados por dia durante 3 dias (sempre conferindo audiência <b>Público</b>).</li>
+            <li>Quando o perfil bate ~1.000 views ou 2–3 dias de uso humano, libera criação de 10–18 páginas sem travar.</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🩺 Diagnóstico Automático de Gargalos</h4>
+          <ul>
+            <li><b>Bug dos 2 Campos:</b> Se <code>/pages/creation/</code> abrir só Nome + Categoria (sem caixa de Bio), não é o nome da página — o robô marca perfil frio e devolve p/ aquecer mais 2 dias.</li>
+            <li><b>Selfie de Vídeo:</b> Se pedir confirmação de selfie, detecta na hora e pula pro próximo perfil sem travar a fila.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL 2 -->
+    <div class="stage-panel" id="panel-2">
+      <div class="stage-header">
+        <div>
+          <h3>Fase 03 — Criação &amp; Estruturação das 10 Páginas (Mesma Conta &amp; Mesmo IP)</h3>
+          <p>Faz todas as páginas daquela conta na mesma sentada, mantendo integridade de <i>Razoável</i> para <i>Ótimo</i> e gastando zero 4G nos intervalos.</p>
+        </div>
+        <span class="pill amber">~5m Estruturação + 2m Pausa Offline = ~7m / Página</span>
+      </div>
+      <div class="cards-3">
+        <div class="sub-box">
+          <h4>📋 Ficha Completa (~5 Minutos)</h4>
+          <ul>
+            <li>Nome + Categoria + Bio em Inglês.</li>
+            <li><b>Endereço Comercial EUA:</b> Endereço real (ex.: comércio real no Maps mudando o final do número) + Cidade + ZIP real.</li>
+            <li><b>Telefone EUA + E-mail:</b> Troca os 2 últimos dígitos do telefone a cada página + <code>@gmail.com</code> na ficha + <code>Sempre aberto</code>.</li>
+            <li><b>Foto &amp; Capa:</b> Rodízio de 20 avatares e 8 capas + remoção da foto de letra padrão (pula <code>@Username</code> no lote p/ ganhar velocidade).</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🔌 Intervalo de 2 Min (Zero 4G / Mesmo IP)</h4>
+          <ul>
+            <li>Criar páginas com menos de ~7 min entre inícios aciona o aviso <i>"número excessivo de páginas recentemente"</i>.</li>
+            <li>Ao concluir a Página 1, o robô joga a aba em <code>about:blank</code> e ativa <code>offline: true</code> via CDP por <b>2 minutos</b>.</li>
+            <li><b>Resultado:</b> Consome <b>0,00 KB/s de 4G</b> na espera e <b>NÃO mexe no Modo Avião</b> — mantendo exatamente o mesmo IP 4G daquela conta para criar até 10 páginas seguidas!</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🎯 Público: Idade <code>24+</code> &amp; 25 Países</h4>
+          <ul>
+            <li>Configura restrição de idade para <b>Pessoas de 24 anos ou mais</b> já na criação.</li>
+            <li>Em vez de fechar em apenas 3 países (que trava o engajamento inicial), <b>oculta os 25 países de baixo CPM</b> (Brasil no topo + Filipinas, Índia, Indonésia, etc.), deixando o leilão aberto pros países qualificados.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL 3 -->
+    <div class="stage-panel" id="panel-3">
+      <div class="stage-header">
+        <div>
+          <h3>Fase 04 — Aquecimento "Ideal" de 7 Dias Já no Nicho em Inglês</h3>
+          <p>Zero espera de 24h pós-criação: acabou de criar as páginas da conta, já sobe o 1º conteúdo ainda na mesma sessão e mesmo IP.</p>
+        </div>
+        <span class="pill lime">1 Único Upload = 10 Páginas Aquecidas</span>
+      </div>
+      <div class="cards-3">
+        <div class="sub-box">
+          <h4>🔀 Post Cruzado Multi-Páginas (MBS)</h4>
+          <ul>
+            <li>Usa <code>Carregar Reels em várias páginas</code> no Meta Business Suite: sobe <b>1 único vídeo</b> na página principal e marca as outras 9 páginas irmãs da conta.</li>
+            <li>Ferramenta oficial da plataforma: zero penalidade de originalidade, entrega 100% independente em cada página e economia de 90% da franquia 4G.</li>
+            <li><b>Opção Agendamento em Massa:</b> Upload de até 50 vídeos &rarr; botão oculto <b>Miniatura</b> &rarr; <b>Programação em grupo</b> (<code>2/dia a cada 12h</code> ou <code>3/dia a cada 4h</code>; teto máx 12/dia c/ 1h).</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🥗 Já no Nicho + Blindagem Anti-Hash</h4>
+          <ul>
+            <li>Diferente do perfil pessoal, a <b>Fan Page aquece desde o Dia 1 no próprio nicho em Inglês</b> (ex.: receitas saudáveis, curiosidades naturais).</li>
+            <li><b>Blindagem FFmpeg:</b> Espelhamento horizontal (<code>hflip</code>) + saturação quente (<code>+4% a +6%</code>) + vinheta leve + crop <code>2–4%</code> em 1080p.</li>
+            <li><b>Descrição Semântica:</b> Palavras-chave do público/ambiente + <code>Tags</code>, com <b>ZERO CTA e ZERO link escrito</b> na legenda.</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>📲 1º Story Curto 2.2s + Regra de Repost</h4>
+          <ul>
+            <li><b>1º Story do Dia:</b> Vídeo ultra-curto (<code>~2.2s</code>) chamativo/duplo sentido esperando 100% do preview carregar no MBS (&gt;90% completam 1s &rarr; explode a entrega dos próximos Stories).</li>
+            <li>Stories não sofrem punição de originalidade: o mesmo Story isca pode ser repetido diariamente após expirar as 24h.</li>
+            <li><b>Repost de Reels:</b> Permitido até <b>5 vezes/mês</b> o mesmo vídeo na página, respeitando <b>5 dias</b> de intervalo e alternando janelas (Manhã / Tarde / Noite).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL 4 -->
+    <div class="stage-panel" id="panel-4">
+      <div class="stage-header">
+        <div>
+          <h3>Fase 05 — Collab Booster (Até 5 Páginas) &amp; Transição Limpa aos 7 Dias</h3>
+          <p>Alavancagem de páginas novas usando páginas fortes do mesmo nicho e regras invioláveis na virada para produção.</p>
+        </div>
+        <span class="pill violet">Zero Arquivamento • Zero Edição Brusca</span>
+      </div>
+      <div class="cards-3">
+        <div class="sub-box">
+          <h4>🤝 Collab até 5 Páginas + Auto-Aceite</h4>
+          <ul>
+            <li>Posta o vídeo na página nova/fraca convidando até <b>5 páginas mais engajadas do mesmo nicho</b> como Colaboradoras (funciona inclusive entre perfis diferentes).</li>
+            <li>Quando a conta da página forte abre na esteira, o robô lê as notificações e <b>aceita o convite Collab automaticamente</b>, injetando tráfego imediato na página nova.</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🚫 O Que NUNCA Fazer na Virada</h4>
+          <ul>
+            <li><b>Jamais arquivar ou excluir</b> os vídeos de aquecimento quando começar a postar criativos principais após 3–7 dias.</li>
+            <li><b>Jamais editar ficha inteira de uma vez</b> (nome + foto + capa + sobre + postar vídeo no mesmo dia em página existente) &rarr; gera <b>Shadowban silencioso de 7 dias</b> onde o upload trava em percentual baixo.</li>
+          </ul>
+        </div>
+        <div class="sub-box">
+          <h4>🏆 Critério de Graduação</h4>
+          <ul>
+            <li><b>Padrão Ideal:</b> 7 dias recebendo conteúdo diário no nicho + assistindo Reels/seguindo páginas como usuário real (fast-track mínimo: 3–4 dias).</li>
+            <li>Páginas permanecem mesclando conteúdo viral de receita/engajamento com conteúdo principal para sustentar alcance orgânico e entrega de Stories.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- POR QUE 24+ E DESCRIÇÃO IMPORTAM (FUNIL DE AMOSTRAGEM) -->
+    <div class="section-title">
+      <h2>📊 3. Fundamento Algorítmico: Por Que Idade <code>24+</code> + Ambiente + Descrição Destravam Entrega</h2>
+      <small>Mecânica de distribuição por amostragem de 3 segundos</small>
+    </div>
+    <div class="funnel-row">
+      <div class="funnel-step">
+        <strong>ETAPA 1 &rarr; 200 Pessoas</strong>
+        <span>Todo Reel novo recebe uma amostra inicial de ~200 pessoas. Se cair para jovens de 18–23 anos sem interesse no tema, todos arrastam em &lt;1s e o vídeo morre. Com <b>24+</b> + descrição semântica, a amostra já nasce qualificada.</span>
+      </div>
+      <div class="funnel-step">
+        <strong>META &ge; 50% Retenção 3s</strong>
+        <span>Se ~100 das 200 pessoas assistem por mais de <b>3 segundos</b>, o algoritmo aprova o gancho audiovisual e promove o vídeo para a próxima piscina.</span>
+      </div>
+      <div class="funnel-step">
+        <strong>ETAPA 2 &rarr; 2.000 Pessoas</strong>
+        <span>Nova aferição da coluna de <i>Visualizações de 3 segundos</i>. Mantendo &ge;50% (~1.000 pessoas), destrava a distribuição ampla.</span>
+      </div>
+      <div class="funnel-step">
+        <strong>ETAPA 3 &rarr; 100.000+ Views</strong>
+        <span>Escala viral aberta. Por isso cada horário do dia (Manhã / Tarde / Noite) atinge uma fatia distinta de público com o mesmo criativo.</span>
+      </div>
+    </div>
+
+    <!-- 25 PAÍSES BLOQUEADOS -->
+    <div class="country-box">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div>
+          <strong style="font-size:14.5px; color:var(--text-1);">🌍 Lista Oficial dos 25 Países Ocultados na Criação (Baixo CPM / Curiosos / Spy)</strong>
+          <div style="font-size:12px; color:var(--text-3); margin-top:2px;">Brasil sempre no topo (nunca entregar pro país de residência) + bloqueio de público desqualificado mantendo alcance global livre.</div>
+        </div>
+        <button class="btn-copy" onclick="copyCountries()" id="btnCopyCountries">📋 Copiar Lista dos 25 Países</button>
+      </div>
+      <div class="chips" id="countriesChips">
+        <span class="chip">1. Brasil</span>
+        <span class="chip">2. Índia</span>
+        <span class="chip">3. Indonésia</span>
+        <span class="chip">4. Afeganistão</span>
+        <span class="chip">5. Angola</span>
+        <span class="chip">6. México</span>
+        <span class="chip">7. África do Sul</span>
+        <span class="chip">8. China</span>
+        <span class="chip">9. Japão</span>
+        <span class="chip">10. Espanha</span>
+        <span class="chip">11. Argentina</span>
+        <span class="chip">12. Vietnã</span>
+        <span class="chip">13. Malásia</span>
+        <span class="chip">14. Camboja</span>
+        <span class="chip">15. Mianmar</span>
+        <span class="chip">16. Etiópia</span>
+        <span class="chip">17. Egito</span>
+        <span class="chip">18. Argélia</span>
+        <span class="chip">19. Marrocos</span>
+        <span class="chip">20. Chile</span>
+        <span class="chip">21. Paraguai</span>
+        <span class="chip">22. Peru</span>
+        <span class="chip">23. Equador</span>
+        <span class="chip">24. Panamá</span>
+        <span class="chip">25. Filipinas</span>
+      </div>
+    </div>
+
+    <!-- MATRIZ DE TRATAMENTO AUTOMÁTICO DE GARGALOS -->
+    <div class="section-title">
+      <h2>🛠️ 4. Matriz de Defesa Automática (Como o Sistema Reage a Cada Cenário)</h2>
+      <small>Zero travamento de fila durante execução autônoma</small>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Cenário / Alerta</th>
+            <th>Causa Real</th>
+            <th>Ação Automática do Motor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Operadora devolve mesmo IP CGNAT no giro</strong></td>
+            <td>Reciclagem momentânea de antena móvel</td>
+            <td>Compara com <code>seen4gIpsInRun</code> e repete o Modo Avião ADB (até 3x) — jamais abre Conta 02 no mesmo IP da Conta 01.</td>
+          </tr>
+          <tr>
+            <td><strong>Tela de criar página abre só 2 campos (sem Bio)</strong></td>
+            <td>Perfil pessoal frio / sem Modo Profissional</td>
+            <td>Não perde tempo trocando nome; marca <code>_lastProfileNeedsMoreWarmup2Fields</code> e roda mais 2–3 dias de aquecimento no perfil.</td>
+          </tr>
+          <tr>
+            <td><strong>"Número excessivo de páginas recentemente"</strong></td>
+            <td>Tentativa abaixo da janela de ~7 min</td>
+            <td>Pausa a rede da aba por <b>2m15s no mesmo IP 4G</b> (0 KB de dados) e retoma a criação na mesma sessão até bater 10 páginas.</td>
+          </tr>
+          <tr>
+            <td><strong>Pedido de Selfie de Vídeo no perfil</strong></td>
+            <td>Checkpoint de identidade no perfil-mãe</td>
+            <td>Detecta instantaneamente, registra no relatório para verificação humana e avança para a próxima conta (com novo giro 4G).</td>
+          </tr>
+          <tr>
+            <td><strong>Upload de vídeo travado em % por horas</strong></td>
+            <td>Shadowban silencioso de 7 dias por edição brusca</td>
+            <td>Trava <code>isPageSafeFromMassEditShadowban</code> impede editar ficha completa e subir vídeo na mesma sessão em páginas antigas.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- MAPA DE ARQUIVOS NO GIT -->
+    <div class="section-title">
+      <h2>📦 5. Estrutura de Módulos no Git (<code>multizen-4g-conveyor</code>)</h2>
+      <small>Código higienizado, modular e pronto para Node.js &ge; 22.5</small>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Arquivo / Módulo</th>
+            <th>Responsabilidade na Esteira</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>multizen.js</code> + <code>fingerprint_generator.js</code></td>
+            <td>Gerenciador SQLite de perfis isolados (<code>CloakBrowser C++</code>), rotação Dual-GPU (<code>D3D11/D3D12</code>), semente <code>X-Client-Data</code> exclusiva e abertura em <code>Zero-CDP</code> ou <code>CDP</code>.</td>
+          </tr>
+          <tr>
+            <td><code>modules/infra_4g/adb_rotator.js</code> + <code>ipv4_proxy_bridge.js</code></td>
+            <td>Giro de Modo Avião via USB ADB, bloqueio de Wi-Fi no aparelho, túnel <code>:8080</code> e ponte IPv4 pura <code>:8082</code> sem vazamento IPv6 <code>rmnet</code>.</td>
+          </tr>
+          <tr>
+            <td><code>modules/account_warmup/gmail_creator.js</code> + <code>meta_pixel_warmer.js</code></td>
+            <td>Esteira de criação em 3 passos (Gmail Web Zero-CDP &rarr; plantio de cookies <code>_fbp</code> &rarr; setup Dia 01 + 2FA).</td>
+          </tr>
+          <tr>
+            <td><code>modules/account_warmup/profile_reels_warmer.js</code></td>
+            <td>Aquecimento do Perfil Pessoal Mãe (Modo Profissional, 9 Reels curtos com blindagem FFmpeg HSL/CapCut, amigos e interesses).</td>
+          </tr>
+          <tr>
+            <td><code>automator.js</code></td>
+            <td>Criador e estruturador completo de até 10 Fan Pages/conta (~5m ficha EUA + 2m pausa offline mesmo-IP + Idade <code>24+</code> + ocultação dos 25 países).</td>
+          </tr>
+          <tr>
+            <td><code>modules/account_warmup/willas_page_warmer.js</code></td>
+            <td>Orquestrador 1-Clique: trava 1 IP 4G exclusivo por conta, roda Perfil + Criação 10 Págs + Story 2.2s + Post Cruzado MBS + Agendamento em Massa (<code>Miniatura &rarr; Grupo</code>) + Collab Auto-Aceite + Graduação 7 Dias.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="alert-strip">
+      💡 <b>Resumo Operacional Diário:</b> Conectou o celular 4G no USB com <i>Every Proxy (:8080)</i> ligado &rarr; para criar contas novas usa o <b>Passo 1 (Gmail Zero-CDP + 2FA)</b>; para rodar toda a fábrica de aquecimento de perfis, criação de 10 páginas e Post Cruzado diário, basta <b>1 clique no PLAY</b> (ou deixar o <b>Auto-Play Contínuo</b> ativo).
+    </div>
+
+    <footer class="footer">
+      MultiZen 4G Conveyor • Documentação Visual de Processos (Criação &amp; Aquecimento Isolado)
+    </footer>
+  </div>
+
+  <script>
+    function selectStage(idx) {
+      for (let i = 0; i < 5; i++) {
+        document.getElementById('tab-' + i).classList.toggle('active', i === idx);
+        document.getElementById('panel-' + i).classList.toggle('active', i === idx);
+      }
+    }
+
+    function copyCountries() {
+      const list = [
+        'Brasil', 'Índia', 'Indonésia', 'Afeganistão', 'Angola',
+        'México', 'África do Sul', 'China', 'Japão', 'Espanha',
+        'Argentina', 'Vietnã', 'Malásia', 'Camboja', 'Mianmar',
+        'Etiópia', 'Egito', 'Argélia', 'Marrocos', 'Chile',
+        'Paraguai', 'Peru', 'Equador', 'Panamá', 'Filipinas'
+      ].join('\n');
+      navigator.clipboard.writeText(list).then(() => {
+        const btn = document.getElementById('btnCopyCountries');
+        const old = btn.textContent;
+        btn.textContent = '✅ 25 Países Copiados!';
+        setTimeout(() => { btn.textContent = old; }, 2200);
+      });
+    }
+  </script>
+</body>
+</html>

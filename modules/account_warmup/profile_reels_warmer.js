@@ -75,15 +75,15 @@ const GOLD_CONVEYOR_STAGES = {
 };
 
 const PTBR_FAMILIAR_CAPTIONS = [
-  'Bom dia com muita paz e saúde pra todos! 🙏☕',
-  'Momentos simples que fazem o nosso dia valer a pena ✨',
-  'Que nunca nos falte fé, família e um café quentinho pela manhã ❤️',
-  'Aproveitando o dia com gratidão sempre! 🙌🌿',
-  'Coisas boas acontecem pra quem mantém o coração leve 😊',
-  'Mais um dia abençoado por aqui, tudo na santa paz! 🙏✨',
-  'Simplicidade no dia a dia é o maior segredo da felicidade 🌻',
-  'Boa tarde pessoal! Que seja uma semana incrível pra todos nós 👏',
-  'Cuidando da mente e da rotina um dia de cada vez 💪☕'
+  'Rotina matinal tranquila na cozinha de casa, receitas caseiras simples, café quentinho na mesa, saúde natural depois dos 50 e paz em família 🙏☕',
+  'Momentos simples de família na cozinha caseira, sabedoria de vó, hábitos saudáveis da manhã e coração leve todos os dias ✨🌿',
+  'Que nunca nos falte fé, família reunida, receitas simples de casa e saúde na maturidade ❤️☕',
+  'Cuidado diário com o bem-estar depois dos 50 anos, vida tranquila no lar, gratidão e rotina saudável pela manhã 🙌🌻',
+  'Histórias reais de família, costumes antigos da vovó, mesa posta com carinho e muita paz no dia a dia 😊✨',
+  'Mais um dia abençoado cuidando da casa, da mente e da saúde natural com simplicidade 🙏🌿',
+  'Simplicidade na rotina doméstica, chá quentinho na cozinha e bem-estar feminino um dia de cada vez 🌻☕',
+  'Vida leve no campo e em casa, temperos naturais, memórias de família e disposição todos os dias 👏❤️',
+  'Pequenos hábitos saudáveis pela manhã, aconchego do lar, fé e tranquilidade pra nossa semana 💪☕'
 ];
 
 /**
@@ -1795,7 +1795,7 @@ async function postWarmupReelOnPersonalProfile(page, automator, accountObj = {},
   }
   const accountLabel = accountObj?.name || accountObj?.email || 'Perfil Pessoal';
   const cleanPid = String(accountObj?.incogniton_profile_id || accountObj?.profile_browser_ID || '').trim().toLowerCase();
-  const isFixedIpMatriz = cleanPid === (process.env.MATRIX_PROFILE_UUID || '00000000-0000-0000-0000-000000000004');
+  const isFixedIpMatriz = cleanPid === '00000000-0000-0000-0000-000000000004';
   const todayStr = new Date().toLocaleDateString('en-CA');
   let totalPosted = Number(accountObj?.profile_videos_posted || accountObj?.warmup_stats?.profile_videos_posted || 0);
   let postedToday = accountObj?.last_profile_video_date === todayStr

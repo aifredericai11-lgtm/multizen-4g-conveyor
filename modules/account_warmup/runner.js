@@ -351,47 +351,71 @@ async function openYoutubeCreationSlot(options = {}, onLog = console.log) {
     await MultiZenService.closeStealthZeroCdpProfileGracefully(prevSlot.profile_id, prevSlot.pid, onLog).catch(() => { });
   }
 
-  // 1. Giro 4G ADB + Confirmação de IP CGNAT Novo em 127.0.0.1:8080
-  let prevIp4g = prevSlot?.ip_4g || '';
-  if (!prevIp4g && !skipRotate) {
+  // 1. Giro 4G ADB + Confirmação de IPv4 CGNAT Inédito na Ponte 127.0.0.1:8082 (Zero IPv6 / Zero Via / Anti-Repetição 12 IPs)
+  const recentIpsFile = path.join(__dirname, '..', '..', 'recent_4g_creation_ips.json');
+  let recentIps = [];
+  try {
+    if (fs.existsSync(recentIpsFile)) {
+      const parsedIps = JSON.parse(fs.readFileSync(recentIpsFile, 'utf8'));
+      if (Array.isArray(parsedIps)) recentIps = parsedIps.filter(Boolean);
+    }
+  } catch (_) { }
+  if (prevSlot?.ip_4g && !recentIps.includes(prevSlot.ip_4g)) {
+    recentIps.unshift(prevSlot.ip_4g);
+  }
+  if (!skipRotate) {
     try {
       const preH = await proxyHealth.get4gProxyHealth('127.0.0.1', 8080);
-      if (preH && preH.proxy_public_ip) prevIp4g = preH.proxy_public_ip;
+      if (preH && preH.proxy_public_ip && !recentIps.includes(preH.proxy_public_ip)) {
+        recentIps.unshift(preH.proxy_public_ip);
+      }
     } catch (_) { }
   }
+  recentIps = recentIps.slice(0, 12);
 
   if (!skipRotate) {
-    onLog(`✈️ [Passo 1/3 • Giro 4G ADB] Acionando Modo Avião no Samsung (Android USB) para renovar IP 4G CGNAT (IP anterior: ${prevIp4g || 'n/a'})...`);
+    onLog(`✈️ [Passo 1/3 • Giro 4G ADB] Acionando Modo Avião no Samsung para renovar IPv4 4G CGNAT (Histórico protegido: últimos ${recentIps.length} IPs)...`);
     await adbRotator.rotate4gIp({}, onLog);
   } else {
-    adbRotator.ensurePortForward(8080, 8080, onLog);
+    adbRotator.ensurePortForward(18080, 8081, onLog);
   }
+
+  let bridgePort = 8080;
+  try {
+    const ipv4Bridge = require('../infra_4g/ipv4_proxy_bridge');
+    const br = await ipv4Bridge.ensureIpv4ProxyBridgeRunning(onLog);
+    if (br && br.running) bridgePort = ipv4Bridge.BRIDGE_PORT;
+  } catch (_) { }
 
   let health = null;
   for (let i = 0; i < 7; i++) {
-    health = await proxyHealth.get4gProxyHealth('127.0.0.1', 8080);
+    health = await proxyHealth.get4gProxyHealth('127.0.0.1', bridgePort);
     if (health && health.proxy_public_ip && (health.is_safe_4g || health.is_safe_4g_ip)) break;
     await new Promise(r => setTimeout(r, 2000));
   }
 
-  // Se a operadora devolveu exatamente o mesmo IP CGNAT anterior, força 2º giro de 10s
-  if (!skipRotate && prevIp4g && health && health.proxy_public_ip === prevIp4g) {
-    onLog(`🔄 [Passo 1/3 • Anti-IP-Repetido] Operadora manteve o mesmo IP (${prevIp4g}). Forçando 2º giro longo de Modo Avião...`);
+  // Se a operadora devolveu qualquer IP CGNAT já usado nas últimas criações, força 2º giro longo
+  if (!skipRotate && health && health.proxy_public_ip && recentIps.includes(health.proxy_public_ip)) {
+    onLog(`🔄 [Passo 1/3 • Anti-IP-Repetido] Operadora devolveu IP já usado recentemente (${health.proxy_public_ip}). Forçando 2º giro longo de Modo Avião...`);
     await adbRotator.rotate4gIp({ maxAttempts: 2 }, onLog);
     for (let i = 0; i < 6; i++) {
-      health = await proxyHealth.get4gProxyHealth('127.0.0.1', 8080);
+      health = await proxyHealth.get4gProxyHealth('127.0.0.1', bridgePort);
       if (health && health.proxy_public_ip && (health.is_safe_4g || health.is_safe_4g_ip)) break;
       await new Promise(r => setTimeout(r, 2000));
     }
   }
 
   if (!health || !health.proxy_public_ip) {
-    throw new Error('Túnel 4G (127.0.0.1:8080) não respondeu com IP público após rotação. Verifique se o Every Proxy está ON no Samsung!');
+    throw new Error('Túnel 4G (127.0.0.1:8082 / :8080) não respondeu com IPv4 público após rotação. Verifique se o Every Proxy está ON no Samsung!');
   }
 
   const ip4g = health.proxy_public_ip;
   const isp4g = health.proxy_isp || '4G Móvel BR';
-  onLog(`🌐 [Passo 1/3 • IP 4G Confirmado] Novo IP CGNAT: ${ip4g} (${isp4g})`);
+  try {
+    const updatedIps = [ip4g, ...recentIps.filter(x => x !== ip4g)].slice(0, 12);
+    fs.writeFileSync(recentIpsFile, JSON.stringify(updatedIps, null, 2), 'utf8');
+  } catch (_) { }
+  onLog(`🌐 [Passo 1/3 • IPv4 4G Puro Confirmado na Ponte :${bridgePort}] Novo IP CGNAT: ${ip4g} (${isp4g})`);
 
   // 2. Seleciona ou cria Slot Virgem no MultiZen C++ + warming_accounts_pipeline.json
   const pipelineData = fs.existsSync(WARMING_PIPELINE_FILE)
@@ -536,11 +560,12 @@ async function openYoutubeCreationSlot(options = {}, onLog = console.log) {
   const suggestedPersona = generateSuggestedGmailWebPersona(slotAcc.name);
   onLog(`🧬 [Passo 2/3 • Slot MultiZen C++] Selecionado "${slotAcc.name}" (Profile ID: ${profileId}) • Sugestão: ${suggestedPersona.suggested_email}`);
 
-  // 3. Lança Google Chrome 157 Oficial em Modo Stealth 100% Humano (ZERO CDP / ZERO PUPPETEER)
-  // Abre YouTube + Pesquisa Google Brasil orgânica (via Ponte 4G IPv4-Only :8081) para plantar cookies NID/AEC/SEARCH_SAMESITE antes de Criar Conta!
-  const prewarmTabs = startUrl.includes('accounts.google.com')
-    ? [startUrl, 'https://www.google.com.br/search?q=dicas+saude+bem+estar+rotina&hl=pt-BR']
-    : [startUrl, 'https://www.google.com.br/search?q=dicas+saude+bem+estar+rotina&hl=pt-BR'];
+  // 3. Lança Google Chrome 157 Oficial em Modo Stealth 100% Humano no PC (ZERO CDP / Dual-Silicon Radeon+RTX / X-Client-Data Único / Ponte IPv4 :8082)
+  // Abre 1 aba limpa do YouTube BR (sem disparar query fria no Google Search CGNAT que poderia acionar /sorry/ antes do cadastro!)
+  const cleanYoutubeOrSignupUrl = startUrl === 'https://www.youtube.com'
+    ? 'https://www.youtube.com/?hl=pt&gl=BR'
+    : startUrl;
+  const prewarmTabs = [cleanYoutubeOrSignupUrl];
   const launchRes = await MultiZenService.launchProfileStealthZeroCdp(profileId, prewarmTabs, onLog);
 
   const slotState = {
