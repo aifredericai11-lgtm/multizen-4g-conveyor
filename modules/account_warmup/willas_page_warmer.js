@@ -25,6 +25,7 @@ const execFileAsync = util.promisify(execFile);
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const WARMUP_VIDEOS_DIR = path.join(PROJECT_ROOT, 'VIDEOS_AQUECIMENTO_PERFIL_PTBR');
+const PAGE_WARMUP_VIDEOS_EN_DIR = path.join(PROJECT_ROOT, 'VIDEOS_AQUECIMENTO_PAGINAS_EN');
 const SHORT_STORIES_CACHE_DIR = path.join(PROJECT_ROOT, 'temp_upload_staging', 'willas_short_stories');
 const WILLAS_LEDGER_FILE = path.join(PROJECT_ROOT, 'willas_warmup_conveyor_state.json');
 const LOCAL_EXTRA_50_WARMUP_DIR = '~\\OneDrive\\Área de Trabalho\\Nova pasta\\prontos\\LEVA_AQUECIMENTO_50_LOCAL';
@@ -36,6 +37,41 @@ try {
 } catch (_) { }
 
 try { fs.mkdirSync(SHORT_STORIES_CACHE_DIR, { recursive: true }); } catch (_) { }
+try { fs.mkdirSync(PAGE_WARMUP_VIDEOS_EN_DIR, { recursive: true }); } catch (_) { }
+
+function listEnglishPageWarmupVideos() {
+  try {
+    fs.mkdirSync(PAGE_WARMUP_VIDEOS_EN_DIR, { recursive: true });
+    const driveEnDir = '';
+    if (fs.existsSync(driveEnDir)) {
+      for (const dEnt of fs.readdirSync(driveEnDir, { withFileTypes: true })) {
+        if (dEnt.isFile() && /\.(mp4|mov)$/i.test(dEnt.name)) {
+          const srcDrive = path.join(driveEnDir, dEnt.name);
+          const dstLocal = path.join(PAGE_WARMUP_VIDEOS_EN_DIR, dEnt.name);
+          if (!fs.existsSync(dstLocal)) {
+            const st = fs.statSync(srcDrive);
+            if (st.size > 10240) fs.copyFileSync(srcDrive, dstLocal);
+          }
+        }
+      }
+    }
+    return fs.readdirSync(PAGE_WARMUP_VIDEOS_EN_DIR, { withFileTypes: true })
+      .filter(e => e.isFile() && /\.(mp4|mov)$/i.test(e.name) && !e.name.startsWith('_tmp_'))
+      .map(e => {
+        const fullPath = path.join(PAGE_WARMUP_VIDEOS_EN_DIR, e.name);
+        const st = fs.statSync(fullPath);
+        return {
+          filename: e.name,
+          fullPath,
+          size_bytes: st.size,
+          uploaded_at: st.mtime.toISOString()
+        };
+      })
+      .sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
+  } catch (_) {
+    return [];
+  }
+}
 
 // Detecta 1x se o FFmpeg configurado suporta aceleração NVIDIA RTX 4050 (h264_nvenc)
 let _nvencChecked = false;
@@ -67,10 +103,10 @@ const WILLAS_AUDIENCE_DESCRIPTIONS_PT = [
 ];
 
 const WILLAS_AUDIENCE_DESCRIPTIONS_EN = [
-  'Peaceful morning kitchen routine, simple homemade wellness habits for women over 50, grandma wisdom, wholesome family moments and healthy daily living.',
-  'Simple home remedies from grandma kitchen, calm morning habits after 50, natural daily vitality, cozy family life and grateful living.',
-  'Wholesome homestead kitchen moments, traditional family habits, healthy aging for women 50+, peaceful mornings and simple homemade care.',
-  'Everyday kitchen wisdom, gentle morning routine for mature women, family togetherness, natural home habits and a calm healthy lifestyle.'
+  'Simple homemade healthy kitchen recipes, peaceful morning routine for women over 50, grandma kitchen wisdom, wholesome family meals and natural daily wellness.',
+  'Easy wholesome recipes from grandma kitchen, calm morning habits after 50, fresh ingredients on the counter, cozy family life and healthy aging.',
+  'Traditional homemade wellness recipes, gentle morning kitchen routine for women 55+, nourishing everyday habits and grateful family living.',
+  'Everyday healthy cooking at home, simple natural ingredients from the kitchen pantry, peaceful mornings for mature women and wholesome living.'
 ];
 
 const SHORT_STORY_DOUBLE_ENTENDRE_HOOKS_PT = [
@@ -518,7 +554,7 @@ async function postShortBaitStoryInMbs(page, automator, { pageObj, sourceVideoPa
   try {
     prepared = await prepareShortBaitStoryMp4(sourceVideoPath, {
       accountSalt: pageObj?.name || '',
-      language: pageObj?.language || 'pt-BR'
+      language: pageObj?.language || 'en-US'
     });
     onLog(`📱 [Story Curto Isca 2.2s • Willas] Gerado (${prepared.durationSec}s • GPU NVENC=${prepared.gpuNvencUsed}) para "${pageObj.name}" -> Abrindo Criador de Story...`);
 
@@ -917,9 +953,9 @@ async function scheduleBulkWarmupReelsInMbs(page, options = {}, onLog = console.
     onLog(`⏳ [Agendamento em Massa MBS] ${stagedOutputs.length} vídeos carregados — preenchendo Descrições Semânticas e clicando no botão oculto "Miniatura" para liberar "Programação em grupo"...`);
     await new Promise(r => setTimeout(r, 6500));
 
-    // Preenche descrições temáticas (Zero CTA / Zero Link) em todas as linhas visíveis
+    // Preenche descrições temáticas em Inglês p/ Fan Pages EUA (Zero CTA / Zero Link) em todas as linhas visíveis
     const descriptionsList = stagedOutputs.map((_, idx) =>
-      buildWillasAudienceKeywordDescription({ language: pageObj.language || 'pt-BR', slotIndex: idx })
+      buildWillasAudienceKeywordDescription({ language: pageObj.language || 'en-US', slotIndex: idx })
     );
     await page.evaluate((descs) => {
       const boxes = Array.from(document.querySelectorAll('[role="textbox"][contenteditable="true"], textarea'));
@@ -1130,7 +1166,7 @@ function buildWillasConveyorDashboardStatus() {
       max_views: Number(p.max_views || 0),
       story_short_today: storyDoneToday,
       age_restriction: p.age_restriction_target || '24+',
-      country_mode: p.country_restriction_mode || 'HIDE_25_LOW_CPM',
+      country_mode: p.country_restriction_mode || 'HIDE_67_LOW_CPM_BR_AFRICA_ASIA',
       resting_24h: rest.resting,
       remaining_rest_h: rest.remaining_hours
     };
@@ -1147,6 +1183,7 @@ function buildWillasConveyorDashboardStatus() {
 
   const sliceWin = getCurrentAudienceSliceWindow();
   const warmupVideos = hubVideoUploader.listActiveWarmupVideos();
+  const pageEnVideos = listEnglishPageWarmupVideos();
 
   return {
     ok: true,
@@ -1164,6 +1201,7 @@ function buildWillasConveyorDashboardStatus() {
       accounts_4g_total: allAccounts.length,
       accounts_logged_fb: allAccounts.filter(a => a.fb_logged_in || Number(a.pages_count || 0) > 0).length,
       warmup_videos_pool: warmupVideos.length,
+      page_en_videos_pool: pageEnVideos.length,
       pages_4g_total: allPages.length,
       pages_resting_24h: pagesIn24hRest.length,
       pages_ready_post_24h: pagesReadyForWarmup.length,
@@ -1222,8 +1260,9 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
 
   try {
     const warmupPool = hubVideoUploader.listActiveWarmupVideos();
-    if (warmupPool.length === 0) {
-      throw new Error('Nenhum vídeo de aquecimento encontrado em VIDEOS_AQUECIMENTO_PERFIL_PTBR.');
+    const pageEnVideosPool = listEnglishPageWarmupVideos();
+    if (warmupPool.length === 0 && pageEnVideosPool.length === 0) {
+      throw new Error('Nenhum vídeo de aquecimento encontrado em VIDEOS_AQUECIMENTO_PAGINAS_EN nem em VIDEOS_AQUECIMENTO_PERFIL_PTBR.');
     }
 
     const pipelineData = loadPipelineData();
@@ -1367,13 +1406,19 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
             }
           }
 
-          // Seleciona vídeo do pool respeitando <= 5 reposts/mês e >= 5 dias de distância!
+          // Seleciona vídeo do pool EN de Receitas/Saúde p/ Fan Pages EUA (VIDEOS_AQUECIMENTO_PAGINAS_EN),
+          // caindo p/ fallback apenas se a pasta EN estiver temporariamente vazia! Respeita <= 5 reposts/mês e >= 5 dias de distância.
           const primaryPg = post24hPages[0];
           const primaryKey = String(primaryPg.id || primaryPg.name);
-          const eligibleVideos = warmupPool.filter(v => canUseWarmupVideoOnPage(primaryKey, v.filename, state).allowed);
-          const chosenPool = eligibleVideos.length > 0 ? eligibleVideos : warmupPool;
+          const activePagePool = pageEnVideosPool.length > 0 ? pageEnVideosPool : warmupPool;
+          const activePageDir = pageEnVideosPool.length > 0 ? PAGE_WARMUP_VIDEOS_EN_DIR : WARMUP_VIDEOS_DIR;
+          if (pageEnVideosPool.length === 0) {
+            emit('WARN', `⚠️ [Pool Páginas EN Vazio] Solte vídeos de receitas/saúde em Inglês em C:\\Hub001\\VIDEOS_AQUECIMENTO_PAGINAS_EN p/ aquecimento 100% EUA!`);
+          }
+          const eligibleVideos = activePagePool.filter(v => canUseWarmupVideoOnPage(primaryKey, v.filename, state).allowed);
+          const chosenPool = eligibleVideos.length > 0 ? eligibleVideos : activePagePool;
           const chosenVid = chosenPool[(idx + Date.now()) % chosenPool.length];
-          const chosenVidFullPath = path.join(WARMUP_VIDEOS_DIR, chosenVid.filename);
+          const chosenVidFullPath = chosenVid.fullPath || path.join(activePageDir, chosenVid.filename);
 
           // B.1: 1º Story do Dia = Duplo Sentido + Curto (2.2s)
           if (settings.willas_daily_short_bait_story_enabled !== false && state.story_posted_by_page_date?.[primaryKey] !== todayYmd) {
@@ -1392,7 +1437,7 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
           // B.2: Agendamento em Massa ("Miniatura" -> "Programação em grupo") OU Post Cruzado Multi-Páginas + Collab Booster
           if (options.bulkScheduleMode === true) {
             const batchFiles = chosenPool.slice(0, Math.min(10, Number(options.bulkVideosCount || 6)));
-            const batchPaths = batchFiles.map(v => path.join(WARMUP_VIDEOS_DIR, v.filename));
+            const batchPaths = batchFiles.map(v => v.fullPath || path.join(activePageDir, v.filename));
             const bulkRes = await scheduleBulkWarmupReelsInMbs(mbsTab, {
               pageObj: primaryPg,
               videoPaths: batchPaths,
@@ -1633,6 +1678,8 @@ function registerWillasConveyorRoutes(app, options = {}) {
 }
 
 module.exports = {
+  PAGE_WARMUP_VIDEOS_EN_DIR,
+  listEnglishPageWarmupVideos,
   WILLAS_AUDIENCE_DESCRIPTIONS_PT,
   WILLAS_AUDIENCE_DESCRIPTIONS_EN,
   sanitizeNoCtaNoLinkDescription,

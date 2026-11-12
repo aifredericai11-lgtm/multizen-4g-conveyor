@@ -1,7 +1,7 @@
 {
   "name": "multizen-4g-conveyor",
-  "version": "2.0.0",
-  "description": "Esteira 4G Completa de Criacao & Aquecimento: Rotacao 4G ADB (1 Conta = 1 IP Exclusivo), Ponte IPv4 Pura (:8082), Dual-GPU Zero-CDP Gmail/Outlook Creator, Aquecimento Perfil 2-3d e Aquecimento Ideal 7d (Post Cruzado MBS + Story 2.2s + Collab)",
+  "version": "2.1.0",
+  "description": "Esteira 4G Completa de Criacao & Aquecimento: Rotacao 4G ADB (1 Conta = 1 IP Exclusivo), Ponte IPv4 Pura (:8082), Dual-GPU Zero-CDP Gmail/Outlook Creator, Aquecimento Perfil 2-3d, 10 Paginas (~5m+2m offline mesmo-IP + 67 Paises Bloqueados) e Aquecimento Ideal 7d (Post Cruzado MBS EN + Story 2.2s + Collab)",
   "main": "multizen.js",
   "type": "commonjs",
   "engines": {
