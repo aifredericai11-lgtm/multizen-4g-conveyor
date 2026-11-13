@@ -546,6 +546,145 @@ async function prepareShortBaitStoryMp4(sourceVideoPath, options = {}) {
 }
 
 /**
+ * Resolve o asset_id Clássico real da Página para o Meta Business Suite.
+ * ATENÇÃO CRÍTICA: O ID "615..." (Additional Profile ID / cookie i_user) NÃO é o asset_id do MBS!
+ * Passar ?asset_id=615... na URL do business.facebook.com gera "Esse conteúdo não está disponível no momento".
+ */
+async function resolveRealMbsAssetIdAndDismissTour(page, automator, pageObj, onLog = console.log) {
+  if (page && !page._mbsDialogAutoAcceptAttached) {
+    page._mbsDialogAutoAcceptAttached = true;
+    page.on('dialog', (dlg) => {
+      try { dlg.accept().catch(() => { }); } catch (_) { }
+    });
+  }
+  const dbRef = (() => { try { return require('../../db'); } catch (_) { return null; } })();
+  const rawMbs = String(pageObj?.mbs_asset_id || '').trim();
+  if (/^\d{10,20}$/.test(rawMbs) && !rawMbs.startsWith('615')) return rawMbs;
+  const rawFb = String(pageObj?.fb_page_id || '').trim();
+  if (/^\d{10,20}$/.test(rawFb) && !rawFb.startsWith('615')) return rawFb;
+
+  // Garante que estamos atuando como a página alvo antes de abrir o MBS sem asset_id=615...
+  if (automator && pageObj?.name) {
+    try {
+      const curU = String(page.url() || '').toLowerCase();
+      if (!curU.includes('business.facebook.com')) {
+        if (!curU.includes('www.facebook.com')) {
+          await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => { });
+          await new Promise(r => setTimeout(r, 3200));
+        }
+        await automator.trySwitchToPageProfile(page, pageObj.name, onLog).catch(() => { });
+        await new Promise(r => setTimeout(r, 2200));
+      }
+    } catch (_) { }
+  }
+
+  await page.goto('https://business.facebook.com/latest/home', {
+    waitUntil: 'domcontentloaded',
+    timeout: 55000
+  }).catch(() => { });
+
+  let resolvedAssetId = '';
+  for (let w = 0; w < 7; w++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const found = await page.evaluate(() => {
+      const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+      // Fecha eventuais modais de tour / boas-vindas do Meta Business Suite
+      const dismissLabels = ['agora nao', 'not now', 'pular', 'skip', 'concluir', 'done', 'entendi', 'got it', 'fechar', 'close'];
+      const dlgBtns = Array.from(document.querySelectorAll('[role="dialog"] [role="button"], [role="dialog"] button'));
+      for (const b of dlgBtns) {
+        const t = norm(b.innerText || b.getAttribute('aria-label') || '');
+        if (dismissLabels.includes(t)) {
+          try { b.click(); } catch (_) { }
+        }
+      }
+      const mUrl = String(window.location.href || '').match(/[?&]asset_id=(\d{10,20})/);
+      if (mUrl && mUrl[1] && !mUrl[1].startsWith('615')) return mUrl[1];
+      const links = Array.from(document.querySelectorAll('a[href*="asset_id="]'));
+      for (const a of links) {
+        const m = String(a.getAttribute('href') || '').match(/[?&]asset_id=(\d{10,20})/);
+        if (m && m[1] && !m[1].startsWith('615')) return m[1];
+      }
+      return '';
+    }).catch(() => '');
+    if (found) {
+      resolvedAssetId = found;
+      break;
+    }
+  }
+
+  if (resolvedAssetId && pageObj?.id && dbRef?.updatePage) {
+    pageObj.mbs_asset_id = resolvedAssetId;
+    try { dbRef.updatePage(pageObj.id, { mbs_asset_id: resolvedAssetId }); } catch (_) { }
+    onLog(`🔗 [MBS Asset ID Resolvido] "${pageObj.name}" -> asset_id=${resolvedAssetId}`);
+  }
+  return resolvedAssetId;
+}
+
+/**
+ * Realiza upload confiável de vídeo/mídia no Meta Business Suite (suporta input[type="file"] direto + waitForFileChooser c/ clique real de mouse!).
+ */
+async function uploadMediaInMbsComposer(page, filePath, buttonTerms = []) {
+  for (let poll = 0; poll < 8; poll++) {
+    // Fecha tour do MBS se apareceu
+    await page.evaluate(() => {
+      const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+      const dismissLabels = ['agora nao', 'not now', 'pular', 'skip', 'entendi', 'got it'];
+      for (const b of Array.from(document.querySelectorAll('[role="dialog"] [role="button"], [role="dialog"] button'))) {
+        const t = norm(b.innerText || b.getAttribute('aria-label') || '');
+        if (dismissLabels.includes(t)) {
+          try { b.click(); } catch (_) { }
+        }
+      }
+    }).catch(() => { });
+
+    const directInputs = await page.$$('input[type="file"]').catch(() => []);
+    if (directInputs && directInputs.length > 0) {
+      await directInputs[0].uploadFile(filePath);
+      return true;
+    }
+
+    const addBtnBox = await page.evaluate((terms) => {
+      const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+      const els = Array.from(document.querySelectorAll('[role="button"], button, span, div'));
+      for (const el of els) {
+        const t = norm(el.innerText || el.getAttribute?.('aria-label') || '');
+        if (!t || t.length > 48) continue;
+        if (terms.some(term => t === term || t.includes(term))) {
+          const btn = el.closest('[role="button"], button') || el;
+          const r = btn.getBoundingClientRect();
+          if (r.width >= 40 && r.height >= 22 && r.top > 70) {
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: t };
+          }
+        }
+      }
+      return null;
+    }, buttonTerms).catch(() => null);
+
+    if (addBtnBox) {
+      try {
+        const [chooser] = await Promise.all([
+          page.waitForFileChooser({ timeout: 7500 }),
+          page.mouse.click(addBtnBox.x, addBtnBox.y)
+        ]);
+        if (chooser) {
+          await chooser.accept([filePath]);
+          return true;
+        }
+      } catch (_) {
+        const postClickInputs = await page.$$('input[type="file"]').catch(() => []);
+        if (postClickInputs && postClickInputs.length > 0) {
+          await postClickInputs[0].uploadFile(filePath);
+          return true;
+        }
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 1800));
+  }
+  return false;
+}
+
+/**
  * Publica o 1º Story Curto de Duplo Sentido (2.2s) na página via Meta Business Suite ("Criar story")
  * aguardando 100% do carregamento do preview antes de clicar em Compartilhar (Call 02 [00:47:50]).
  */
@@ -558,64 +697,89 @@ async function postShortBaitStoryInMbs(page, automator, { pageObj, sourceVideoPa
     });
     onLog(`📱 [Story Curto Isca 2.2s • Willas] Gerado (${prepared.durationSec}s • GPU NVENC=${prepared.gpuNvencUsed}) para "${pageObj.name}" -> Abrindo Criador de Story...`);
 
-    const assetParam = pageObj?.fb_page_id ? `?asset_id=${encodeURIComponent(pageObj.fb_page_id)}` : '';
+    const realAssetId = await resolveRealMbsAssetIdAndDismissTour(page, automator, pageObj, onLog);
+    const assetParam = realAssetId ? `?asset_id=${encodeURIComponent(realAssetId)}` : '';
     await page.goto(`https://business.facebook.com/latest/story_composer${assetParam}`, {
       waitUntil: 'domcontentloaded',
       timeout: 55000
     }).catch(() => { });
     await new Promise(r => setTimeout(r, 4500));
 
-    // Localiza input[type="file"] do Story no MBS (ou clica em "Adicionar foto/vídeo" / "Add photo/video")
-    let fileInputs = await page.$$('input[type="file"]').catch(() => []);
-    if (!fileInputs || fileInputs.length === 0) {
-      await page.evaluate(() => {
+    let uploadedStoryOk = await uploadMediaInMbsComposer(page, prepared.storyMp4Path, [
+      'adicionar foto/video',
+      'adicionar foto',
+      'adicionar video',
+      'adicionar midia',
+      'add photo/video',
+      'add photo',
+      'add video',
+      'add media'
+    ]);
+
+    // Fallback via botão "Criar story" na Home do MBS se a rota direta redirecionou
+    if (!uploadedStoryOk) {
+      await page.goto(`https://business.facebook.com/latest/home${assetParam}`, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => { });
+      await new Promise(r => setTimeout(r, 4000));
+      const createStoryHomeBtn = await page.evaluate(() => {
         const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-        const btns = Array.from(document.querySelectorAll('[role="button"], button, span'));
-        for (const b of btns) {
-          const t = norm(b.innerText || '');
-          if (t.includes('adicionar foto') || t.includes('adicionar video') || t.includes('add photo') || t.includes('add video') || t.includes('adicionar midia') || t.includes('add media')) {
-            try { (b.closest('[role="button"], button') || b).click(); } catch (_) { }
-            break;
+        for (const el of Array.from(document.querySelectorAll('[role="button"], button, a, span'))) {
+          const t = norm(el.innerText || el.getAttribute?.('aria-label') || '');
+          if (t === 'criar story' || t === 'create story') {
+            const btn = el.closest('[role="button"], button, a') || el;
+            const r = btn.getBoundingClientRect();
+            if (r.width > 40 && r.height >= 20 && r.top > 65) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
           }
         }
-      }).catch(() => { });
-      await new Promise(r => setTimeout(r, 1500));
-      fileInputs = await page.$$('input[type="file"]').catch(() => []);
+        return null;
+      }).catch(() => null);
+      if (createStoryHomeBtn) {
+        await page.mouse.click(createStoryHomeBtn.x, createStoryHomeBtn.y).catch(() => { });
+        await new Promise(r => setTimeout(r, 4500));
+        uploadedStoryOk = await uploadMediaInMbsComposer(page, prepared.storyMp4Path, [
+          'adicionar foto/video', 'adicionar foto', 'adicionar video', 'adicionar midia', 'add photo', 'add video', 'add media'
+        ]);
+      }
     }
 
-    if (!fileInputs || fileInputs.length === 0) {
+    if (!uploadedStoryOk) {
+      if (automator?.captureStepScreenshot) {
+        await automator.captureStepScreenshot(page, 'mbs_story_sem_upload', pageObj.name, onLog).catch(() => { });
+      }
       onLog(`⚠️ [Story Curto Isca] Campo de upload não localizado no MBS de "${pageObj.name}" — pulando Story com segurança.`);
       return { ok: false, reason: 'NO_STORY_FILE_INPUT' };
     }
 
-    await fileInputs[0].uploadFile(prepared.storyMp4Path);
     onLog(`⏳ [Story Curto Isca] Aguardando 100% do processamento do preview do Story no MBS antes de compartilhar...`);
 
     let shareReadyBox = null;
-    for (let w = 0; w < 22; w++) {
+    for (let w = 0; w < 24; w++) {
       await new Promise(r => setTimeout(r, 2000));
       shareReadyBox = await page.evaluate(() => {
         const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+        const vw = window.innerWidth || 1280;
         const bodyTxt = norm(document.body?.innerText || '');
         const stillUploading = bodyTxt.includes('carregando...') || bodyTxt.includes('uploading...') || bodyTxt.includes('0%');
         const hasVideoPreview = Boolean(document.querySelector('video, img[src*="scontent"], canvas'));
         if (stillUploading && !hasVideoPreview) return null;
 
+        window.scrollTo(0, document.body.scrollHeight);
         const btns = Array.from(document.querySelectorAll('[role="button"], button'));
         for (let i = btns.length - 1; i >= 0; i--) {
           const b = btns[i];
           if (b.disabled || b.getAttribute('aria-disabled') === 'true') continue;
           const t = norm(b.innerText || b.getAttribute('aria-label') || '');
+          // Ignora o toggle esquerdo "Compartilhar agora | Programar" — exige botão primário à direita (x > 52% da largura)
           if (
             t === 'compartilhar' ||
             t === 'compartilhar story' ||
-            t === 'publicar' ||
+            t === 'compartilhar no story' ||
             t === 'share' ||
             t === 'share story' ||
-            t === 'publish'
+            t === 'share to story'
           ) {
+            if (b.scrollIntoView) b.scrollIntoView({ block: 'center' });
             const r = b.getBoundingClientRect();
-            if (r.width > 45 && r.height > 22 && r.top > 80) {
+            if (r.width > 45 && r.height > 22 && r.top > 80 && r.left > vw * 0.45) {
               return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: t };
             }
           }
@@ -633,7 +797,15 @@ async function postShortBaitStoryInMbs(page, automator, { pageObj, sourceVideoPa
     // Espera extra de segurança p/ garantir 100% preview renderizado (Regra Willas [00:47:50])
     await new Promise(r => setTimeout(r, 2500));
     await page.mouse.click(shareReadyBox.x, shareReadyBox.y);
-    await new Promise(r => setTimeout(r, 5500));
+    for (let postWait = 0; postWait < 8; postWait++) {
+      await new Promise(r => setTimeout(r, 1800));
+      const leftComposer = await page.evaluate(() => {
+        const u = String(window.location.href || '').toLowerCase();
+        const t = String(document.body?.innerText || '').toLowerCase();
+        return !u.includes('story_composer') || t.includes('story publicado') || t.includes('foi compartilhado') || t.includes('story shared');
+      }).catch(() => false);
+      if (leftComposer) break;
+    }
 
     onLog(`✅ [Story Curto Isca 2.2s • Publicado] 1º Story de duplo sentido publicado em "${pageObj.name}"!`);
     return { ok: true, duration_sec: prepared.durationSec, hook: prepared.hookText };
@@ -674,14 +846,34 @@ async function postCrosspostedWarmupReelInMbs(page, automator, options = {}, onL
     const pageNamesList = eligiblePages.map(p => p.name);
     onLog(`🔀 [Post Cruzado MBS • Willas Call 03] Abrindo URL direta post_to_multiple_pages no Meta Business Suite para aquecer ${pageNamesList.length} página(s) no nicho Saúde/Receitas (${pageNamesList.join(', ')})...`);
 
-    const assetQuery = primaryPage.fb_page_id
-      ? `?ref=biz_web_home_post_to_multiple_pages&asset_id=${encodeURIComponent(primaryPage.fb_page_id)}&context_ref=HOME`
+    const realAssetId = await resolveRealMbsAssetIdAndDismissTour(page, automator, primaryPage, onLog);
+    const assetQuery = realAssetId
+      ? `?ref=biz_web_home_post_to_multiple_pages&asset_id=${encodeURIComponent(realAssetId)}&context_ref=HOME`
       : '?ref=biz_web_home_post_to_multiple_pages&context_ref=HOME';
     await page.goto(`https://business.facebook.com/latest/reels_composer/${assetQuery}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60000
     }).catch(() => { });
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 5500));
+
+    // Se a rota direta redirecionou p/ Home do MBS, clica em "Criar reel" / "Publicar em várias páginas" na Home
+    const landedInComposer = await page.evaluate(() => {
+      const u = String(window.location.href || '').toLowerCase();
+      const t = String(document.body?.innerText || '').toLowerCase();
+      return u.includes('reels_composer') || t.includes('adicionar vídeo') || t.includes('add video') || t.includes('criar reel');
+    }).catch(() => false);
+    if (!landedInComposer) {
+      await page.evaluate(() => {
+        const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+        for (const el of Array.from(document.querySelectorAll('[role="button"], button, a, span'))) {
+          const t = norm(el.innerText || el.getAttribute?.('aria-label') || '');
+          if (t === 'criar reel' || t === 'create reel' || t.includes('varias paginas') || t.includes('multiple pages')) {
+            try { (el.closest('[role="button"], button, a') || el).click(); break; } catch (_) { }
+          }
+        }
+      }).catch(() => { });
+      await new Promise(r => setTimeout(r, 4500));
+    }
 
     // 1. Se houver > 1 página elegível no perfil, abre o seletor "Publicar em" / "Post to" e marca todas as páginas irmãs (Post Cruzado Nativo!)
     let checkedPagesCount = 1;
@@ -692,7 +884,7 @@ async function postCrosspostedWarmupReelInMbs(page, automator, options = {}, onL
         for (const el of triggers) {
           const t = norm(el.innerText || el.getAttribute('aria-label') || '');
           const r = el.getBoundingClientRect();
-          if (r.width > 80 && r.height >= 24 && r.top > 60 && r.top < 360 && r.left < 680) {
+          if (r.width > 80 && r.height >= 24 && r.top > 60 && r.top < 380 && r.left < 720) {
             if (t.includes('publicar em') || t.includes('post to') || t.includes('paginas') || t.includes('pages') || el.getAttribute('role') === 'combobox') {
               try { el.click(); } catch (_) { }
               return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -704,7 +896,7 @@ async function postCrosspostedWarmupReelInMbs(page, automator, options = {}, onL
 
       if (openedMultiPageDropdown) {
         await page.mouse.click(openedMultiPageDropdown.x, openedMultiPageDropdown.y).catch(() => { });
-        await new Promise(r => setTimeout(r, 1400));
+        await new Promise(r => setTimeout(r, 1500));
 
         checkedPagesCount = await page.evaluate((targetNames) => {
           const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
@@ -715,7 +907,7 @@ async function postCrosspostedWarmupReelInMbs(page, automator, options = {}, onL
             const txt = norm(it.innerText || it.getAttribute?.('aria-label') || it.closest('div')?.innerText || '');
             if (!txt) continue;
             for (const want of wantSet) {
-              if (txt === want || txt.startsWith(want + '\n')) {
+              if (txt === want || txt.startsWith(want + '\n') || txt.includes(want)) {
                 const isChecked = it.getAttribute?.('aria-checked') === 'true' || it.checked === true || Boolean(it.querySelector?.('[aria-checked="true"], input:checked'));
                 if (!isChecked) {
                   try { it.click(); } catch (_) { }
@@ -729,36 +921,29 @@ async function postCrosspostedWarmupReelInMbs(page, automator, options = {}, onL
         }, pageNamesList).catch(() => 1);
 
         await page.keyboard.press('Escape').catch(() => { });
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 900));
         onLog(`✅ [Post Cruzado MBS] ${checkedPagesCount}/${pageNamesList.length} página(s) irmã(s) marcadas no seletor multi-página!`);
       }
     }
 
-    // 2. Upload do MP4 blindado ("Adicionar vídeo" / input[type="file"])
-    let fileInputs = await page.$$('input[type="file"]').catch(() => []);
-    if (!fileInputs || fileInputs.length === 0) {
-      await page.evaluate(() => {
-        const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-        const btns = Array.from(document.querySelectorAll('[role="button"], button, span'));
-        for (const b of btns) {
-          const t = norm(b.innerText || '');
-          if (t === 'adicionar video' || t === 'add video' || t.includes('carregar video') || t.includes('upload video')) {
-            try { (b.closest('[role="button"], button') || b).click(); } catch (_) { }
-            break;
-          }
-        }
-      }).catch(() => { });
-      await new Promise(r => setTimeout(r, 1500));
-      fileInputs = await page.$$('input[type="file"]').catch(() => []);
-    }
+    // 2. Upload do MP4 blindado ("Adicionar vídeo" via input[type="file"] ou FileChooser real!)
+    const uploadedReelOk = await uploadMediaInMbsComposer(page, shielded.outputPath, [
+      'adicionar video',
+      'add video',
+      'carregar video',
+      'upload video'
+    ]);
 
-    if (!fileInputs || fileInputs.length === 0) {
+    if (!uploadedReelOk) {
+      if (automator?.captureStepScreenshot) {
+        await automator.captureStepScreenshot(page, 'mbs_crosspost_sem_upload', primaryPage.name, onLog).catch(() => { });
+      }
+      onLog(`⚠️ [Post Cruzado MBS] Campo de upload não abriu para "${primaryPage.name}".`);
       return { ok: false, reason: 'MBS_REELS_COMPOSER_NO_FILE_INPUT' };
     }
 
-    await fileInputs[0].uploadFile(shielded.outputPath);
     onLog(`📤 [Post Cruzado MBS] Upload enviado (${path.basename(shielded.outputPath)}) — preenchendo Descrição Semântica (Zero CTA / Zero Link)...`);
-    await new Promise(r => setTimeout(r, 3500));
+    await new Promise(r => setTimeout(r, 3800));
 
     // 3. Preenche a Descrição rica em palavras-chave do público/tema (Zero CTA e Zero Link)
     const descBox = await page.evaluate(() => {
@@ -863,6 +1048,9 @@ async function postCrosspostedWarmupReelInMbs(page, automator, options = {}, onL
     }
 
     if (publishedOk) {
+      if (automator?.captureStepScreenshot) {
+        await automator.captureStepScreenshot(page, 'mbs_crosspost_publicado', primaryPage.name, onLog).catch(() => { });
+      }
       onLog(`🎉 [Post Cruzado MBS Concluído] Reel de aquecimento publicado simultaneamente para ${checkedPagesCount} página(s)!`);
     }
     return {
@@ -902,7 +1090,8 @@ async function scheduleBulkWarmupReelsInMbs(page, options = {}, onLog = console.
     }
 
     onLog(`📦 [Agendamento em Massa MBS • Willas] Abrindo "Carregar Reels em massa" para "${pageObj.name}" (${stagedOutputs.length} vídeos • ${postsPerDay}/dia a cada ${hoursGap}h)...`);
-    const assetParam = pageObj.fb_page_id ? `?asset_id=${encodeURIComponent(pageObj.fb_page_id)}` : '';
+    const realBulkAssetId = await resolveRealMbsAssetIdAndDismissTour(page, options.automator || null, pageObj, onLog);
+    const assetParam = realBulkAssetId ? `?asset_id=${encodeURIComponent(realBulkAssetId)}` : '';
     await page.goto(`https://business.facebook.com/latest/bulk_upload_composer${assetParam}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60000
@@ -1266,17 +1455,28 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
     }
 
     const pipelineData = loadPipelineData();
-    const targetAccountId = String(options.accountId || '').trim().toLowerCase();
+    const rawTargets = [
+      options.accountId,
+      options.profileId,
+      ...(Array.isArray(options.accountIds) ? options.accountIds : (typeof options.accountIds === 'string' ? options.accountIds.split(',') : []))
+    ]
+      .map(v => String(v || '').trim().toLowerCase())
+      .filter(Boolean);
+    const targetSet = new Set(rawTargets);
+    const allDbPages = db.getPages() || [];
     const eligibleAccounts = (pipelineData.accounts || []).filter(acc => {
       if (!acc) return false;
       const st = String(acc.status || '').toUpperCase();
       if (st === 'CEMITERIO' || st === 'BURIED_GRAVEYARD') return false;
       const pid = String(acc.incogniton_profile_id || '').trim().toLowerCase();
+      const aid = String(acc.id || '').trim().toLowerCase();
       if (!pid || pid.startsWith('00000000')) return false; // ZERO Matriz
-      if (targetAccountId && String(acc.id || '').toLowerCase() !== targetAccountId && pid !== targetAccountId) return false;
-      // Ignora slots virgens sem login
-      const allDbPages = db.getPages() || [];
+      if (targetSet.size > 0 && !targetSet.has(aid) && !targetSet.has(pid)) return false;
       const hasPages = allDbPages.some(p => String(p.profile_browser_ID || '').toLowerCase() === pid);
+      // Rejeita rascunhos que ainda aguardam login manual no Gmail/FB (ex: Scarlett Hayes / Olivia Bennett)
+      if (!hasPages && (st.includes('LOGIN_ZERO_CDP_PENDENTE') || st.includes('LOGIN_PENDENTE') || st.includes('WAITING_LOGIN') || st.includes('READY_FOR_LOGIN'))) {
+        return false;
+      }
       const isLogged = Boolean(acc.fb_logged_in || hasPages || Number(acc.profile_videos_posted || 0) > 0);
       return isLogged;
     });
@@ -1306,7 +1506,11 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
         let h4g = null;
         for (let rotTry = 1; rotTry <= 3; rotTry++) {
           await adbRotator.rotate4gIp({ previousIp: lastAccount4gIp }, (m) => emit('INFO', m));
-          h4g = await proxyHealth.get4gProxyHealth('127.0.0.1', 8080);
+          for (let settleTry = 1; settleTry <= 5; settleTry++) {
+            await new Promise(r => setTimeout(r, 2000));
+            h4g = await proxyHealth.get4gProxyHealth('127.0.0.1', 8080);
+            if (h4g && h4g.proxy_public_ip && h4g.is_safe_4g_ip) break;
+          }
           if (h4g && h4g.proxy_public_ip && h4g.is_safe_4g_ip && !seen4gIpsInRun.has(h4g.proxy_public_ip)) {
             break;
           }
@@ -1322,6 +1526,37 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
         lastAccount4gIp = h4g.proxy_public_ip;
         emit('SUCCESS', `🛡️ [IP 4G Exclusivo Travado] "${acc.name}" operando isolada no IP ${h4g.proxy_public_ip}!`);
 
+        // Carimba imediatamente o account_ip_ledger com o IP recém-girado desta conta para o Gatekeeper do IncognitonService
+        // não disparar um 2º Modo Avião redundante 1s depois!
+        try {
+          const cleanPid = profileId.toLowerCase();
+          const ldg = IncognitonService.loadAccountIpLedger() || {};
+          ldg.by_profile = ldg.by_profile || {};
+          for (const [otherPid, otherEntry] of Object.entries(ldg.by_profile)) {
+            if (otherPid !== cleanPid && otherEntry && otherEntry.last_ip === h4g.proxy_public_ip) {
+              otherEntry.last_ip = `${h4g.proxy_public_ip}_stale`;
+            }
+          }
+          ldg.by_profile[cleanPid] = {
+            ...(ldg.by_profile[cleanPid] || {}),
+            last_ip: h4g.proxy_public_ip,
+            org: h4g.proxy_isp || '4G Mobile Tunnel (Every Proxy)',
+            network_mode: '4G_ROTATING',
+            proxy_url: 'http://127.0.0.1:8080',
+            updated_at: new Date().toISOString()
+          };
+          ldg.last_rotated_for_profile_id = cleanPid;
+          ldg.last_rotated_at = new Date().toISOString();
+          IncognitonService.saveAccountIpLedger(ldg);
+          automator._verified4gSessionCache = automator._verified4gSessionCache || new Map();
+          automator._verified4gSessionCache.set(profileId, {
+            ip: h4g.proxy_public_ip,
+            at: Date.now(),
+            result: { verified: true, mode: '4G_TUNNEL', ip: h4g.proxy_public_ip }
+          });
+        } catch (_) { }
+        await new Promise(r => setTimeout(r, 1500));
+
         // Abre 1 única sessão do navegador para fazer TUDO desta conta no mesmo IP e fechar no final!
         const { cdp_url } = await inc.ensureProfileLaunched(profileId, (m) => emit('INFO', m));
         if (!cdp_url) throw new Error(`Falha ao abrir CloakBrowser de "${acc.name}".`);
@@ -1329,6 +1564,22 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
         let tabs = await browser.pages();
         let mbsTab = tabs.find(t => String(t.url() || '').includes('facebook.com')) || tabs[0] || (await browser.newPage());
         await mbsTab.bringToFront().catch(() => { });
+
+        // TRAVA IMEDIATA ANTI-CONTA-DESLOGADA (<1s via cookie c_user): se não houver login real no Facebook, fecha na hora!
+        const fbSessionCookies = await mbsTab.cookies('https://www.facebook.com', 'https://web.facebook.com').catch(() => []);
+        const hasActiveCUser = fbSessionCookies.some(c => c && c.name === 'c_user' && /^\d{6,22}$/.test(String(c.value || '')));
+        if (!hasActiveCUser) {
+          emit('WARN', `⚠️ [Conta Ainda Não Logada no FB] "${acc.name}" está sem cookie c_user ativo — marcando fb_logged_in=false e pulando em 1s!`);
+          try {
+            const freshPipe = loadPipelineData();
+            const matchAcc = (freshPipe.accounts || []).find(a => String(a.id || '') === String(acc.id || '') || String(a.incogniton_profile_id || '') === profileId);
+            if (matchAcc) {
+              matchAcc.fb_logged_in = false;
+              savePipelineData(freshPipe);
+            }
+          } catch (_) { }
+          continue;
+        }
 
         // ETAPA A: Aquecimento do Perfil Pessoal (2–3 dias: Modo Profissional + Reels PT-BR + Amigos) + Criação das 10 Páginas na Mesma Conta/Mesmo IP!
         if (options.onlyPageMbsWarmup !== true) {
@@ -1339,7 +1590,7 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
           const profVideosDone = Number(acc.profile_videos_posted || acc.warmup_stats?.profile_videos_posted || 0);
 
           // A.1: Aquecimento do Perfil Pessoal (se ainda não fechou os 9 Reels PT-BR de 3 dias)
-          if (profVideosDone < 9) {
+          if (profVideosDone < 9 && options.skipProfileReels !== true) {
             await profileReelsWarmer.ensurePersonalProfileProfessionalMode(mbsTab, (m) => emit('INFO', m)).catch(() => { });
             const reelRes = await profileReelsWarmer.postWarmupReelOnPersonalProfile(mbsTab, automator, acc, (m) => emit('INFO', m)).catch(e => ({ success: false, error: e.message }));
             if (reelRes && (reelRes.posted_this_session > 0 || reelRes.success)) {
@@ -1392,7 +1643,11 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
           return true;
         });
 
-        if (post24hPages.length > 0 && options.skipPageMbsWarmup !== true) {
+        if (post24hPages.length > 0 && options.skipPageMbsWarmup !== true && pageEnVideosPool.length === 0) {
+          emit('WARN', `⏸️ [Páginas EUA • Aguardando Vídeos EN] Pasta C:\\Hub001\\VIDEOS_AQUECIMENTO_PAGINAS_EN está vazia — pulando Story/Post Cruzado de Páginas (BLOQUEIO ABSOLUTO contra postar PT-BR em Fan Page EUA!).`);
+        }
+
+        if (post24hPages.length > 0 && options.skipPageMbsWarmup !== true && pageEnVideosPool.length > 0) {
           emit('INFO', `🔥 [Aquecimento Ideal 7 Dias • "${acc.name}" • Mesmo IP ${lastAccount4gIp}] ${post24hPages.length} página(s) -> Story 2.2s + ${options.bulkScheduleMode ? 'Agendamento em Massa MBS' : 'Post Cruzado MBS (1 upload p/ todas)'} + Collab!`);
 
           // B.0 (Call 03 [28:50]): Auto-aceite de convites Collab pendentes nas páginas mais fortes desta conta!
@@ -1406,15 +1661,11 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
             }
           }
 
-          // Seleciona vídeo do pool EN de Receitas/Saúde p/ Fan Pages EUA (VIDEOS_AQUECIMENTO_PAGINAS_EN),
-          // caindo p/ fallback apenas se a pasta EN estiver temporariamente vazia! Respeita <= 5 reposts/mês e >= 5 dias de distância.
+          // TRAVA INVIOLÁVEL DE IDIOMA: Fan Pages EUA usam EXCLUSIVAMENTE VIDEOS_AQUECIMENTO_PAGINAS_EN (JAMAIS faz fallback para PT-BR!).
           const primaryPg = post24hPages[0];
           const primaryKey = String(primaryPg.id || primaryPg.name);
-          const activePagePool = pageEnVideosPool.length > 0 ? pageEnVideosPool : warmupPool;
-          const activePageDir = pageEnVideosPool.length > 0 ? PAGE_WARMUP_VIDEOS_EN_DIR : WARMUP_VIDEOS_DIR;
-          if (pageEnVideosPool.length === 0) {
-            emit('WARN', `⚠️ [Pool Páginas EN Vazio] Solte vídeos de receitas/saúde em Inglês em C:\\Hub001\\VIDEOS_AQUECIMENTO_PAGINAS_EN p/ aquecimento 100% EUA!`);
-          }
+          const activePagePool = pageEnVideosPool;
+          const activePageDir = PAGE_WARMUP_VIDEOS_EN_DIR;
           const eligibleVideos = activePagePool.filter(v => canUseWarmupVideoOnPage(primaryKey, v.filename, state).allowed);
           const chosenPool = eligibleVideos.length > 0 ? eligibleVideos : activePagePool;
           const chosenVid = chosenPool[(idx + Date.now()) % chosenPool.length];
@@ -1491,7 +1742,8 @@ async function runWillasFullWarmupConveyor(options = {}, logFn = (lvl, msg) => c
     state.last_run_at = summary.finished_at;
     state.last_run_summary = summary;
     saveWillasConveyorState(state);
-    savePipelineData(pipelineData);
+    // NÃO sobrescreve warming_accounts_pipeline.json com o snapshot antigo do início do turno
+    // (pois profile_reels_warmer e automator já gravam em disco cada Reel/Página em tempo real!)
 
     emit(
       'SUCCESS',

@@ -883,19 +883,17 @@ function getAdbDeviceStatus(forceFresh = false) {
 
                   _inFlightTunnelProbePromise = (async () => {
                     try {
-                      const adbSt = getAdbDeviceStatus(false);
-                      if (!adbSt || !adbSt.adb_connected) {
-                        return null;
+                      const adbSt = cachedAdbDevStatus ? getAdbDeviceStatus(false) : getAdbDeviceStatus(true);
+                      if (adbSt && adbSt.adb_connected) {
+                        ensureAdbProxyTunnelAndWifiOff(ADB_4G_PROXY_PORT);
                       }
-
-                      ensureAdbProxyTunnelAndWifiOff(ADB_4G_PROXY_PORT);
 
                       const proxyUrl = `http://127.0.0.1:${ADB_4G_PROXY_PORT}`;
                       try {
                         const rawIpify = await execFilePromise(
                           'curl.exe',
-                          ['-s', '--max-time', '4', '-x', proxyUrl, 'https://api.ipify.org?format=json'],
-                          { timeout: 4800 }
+                          ['-s', '--max-time', '8', '-x', proxyUrl, 'https://api.ipify.org?format=json'],
+                          { timeout: 9000 }
                         );
                         if (rawIpify && rawIpify.includes('"ip"')) {
                           const dIpify = JSON.parse(rawIpify);
@@ -942,6 +940,26 @@ function getAdbDeviceStatus(forceFresh = false) {
                             _cachedTunnelProbeAt = Date.now();
                             return resObj;
                           }
+                        }
+                      } catch (_) { }
+
+                      try {
+                        const ph = await require('./modules/infra_4g/proxy_health').get4gProxyHealth('127.0.0.1', ADB_4G_PROXY_PORT);
+                        if (ph && ph.proxy_public_ip && ph.is_safe_4g_ip) {
+                          const resObj = {
+                            ip: String(ph.proxy_public_ip).trim(),
+                            ipv6: null,
+                            org: ph.proxy_isp || '4G Mobile Tunnel (Every Proxy)',
+                            city: '',
+                            region: '',
+                            country: 'BR',
+                            tunnel_mode: 'ADB_FORWARD_PROXY',
+                            proxy_url: 'http://127.0.0.1:8080',
+                            checked_at: new Date().toISOString()
+                          };
+                          _cachedTunnelProbeResult = resObj;
+                          _cachedTunnelProbeAt = Date.now();
+                          return resObj;
                         }
                       } catch (_) { }
 
@@ -2067,6 +2085,20 @@ function getAdbDeviceStatus(forceFresh = false) {
                         ensureAdbProxyTunnelAndWifiOff(ADB_4G_PROXY_PORT);
                         await healAdbUpstreamTunnelAsync();
                         currentIpInfo = await getCurrentPublicIpInfo({ prefer4gTunnel: true, strict4gProxyOnly: true });
+                        if (!currentIpInfo || !currentIpInfo.ip) {
+                          try {
+                            const ph = await require('./modules/infra_4g/proxy_health').get4gProxyHealth('127.0.0.1', ADB_4G_PROXY_PORT);
+                            if (ph && ph.proxy_public_ip && ph.is_safe_4g_ip) {
+                              currentIpInfo = {
+                                ip: String(ph.proxy_public_ip).trim(),
+                                ipv6: null,
+                                org: ph.proxy_isp || '4G Mobile Tunnel (Every Proxy)',
+                                tunnel_mode: 'ADB_FORWARD_PROXY',
+                                proxy_url: `http://127.0.0.1:${ADB_4G_PROXY_PORT}`
+                              };
+                            }
+                          } catch (_) { }
+                        }
                         if (currentIpInfo && currentIpInfo.ip) break;
                         await new Promise(r => setTimeout(r, 2000));
                       }
